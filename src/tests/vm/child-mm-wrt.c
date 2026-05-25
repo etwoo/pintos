@@ -3,22 +3,22 @@
    without calling munmap.  The data in the mapped region must be
    written out at program termination. */
 
-#include <string.h>
-#include <syscall.h>
-#include "tests/vm/sample.inc"
 #include "tests/lib.h"
 #include "tests/main.h"
+#include "tests/vm/sample.inc"
 
-#define ACTUAL ((void *) 0x10000000)
+#include <string.h>
+#include <syscall.h>
+
+#define ACTUAL ((void *)0x10000000)
 
 void
-test_main (void)
+test_main(void)
 {
-  int handle;
+	int handle;
 
-  CHECK (create ("sample.txt", sizeof sample), "create \"sample.txt\"");
-  CHECK ((handle = open ("sample.txt")) > 1, "open \"sample.txt\"");
-  CHECK (mmap (handle, ACTUAL) != MAP_FAILED, "mmap \"sample.txt\"");
-  memcpy (ACTUAL, sample, sizeof sample);
+	CHECK(create("sample.txt", sizeof sample), "create \"sample.txt\"");
+	CHECK((handle = open("sample.txt")) > 1, "open \"sample.txt\"");
+	CHECK(mmap(handle, ACTUAL) != MAP_FAILED, "mmap \"sample.txt\"");
+	memcpy(ACTUAL, sample, sizeof sample);
 }
-

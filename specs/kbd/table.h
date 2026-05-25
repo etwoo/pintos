@@ -25,7 +25,6 @@ unsigned char ttable[256] = {
 
 /* some entries guessed - see scancodes.sgml */
 
-
 /* Untranslated scancodes, and USB key values.
    For translated values, feed through ttable[].
 
@@ -34,10 +33,10 @@ unsigned char ttable[256] = {
    Microsoft Internet keys, and misses some set1 values. */
 
 struct keycode {
-	unsigned int position,	usb,	set1,	set2,	set3;
-	char *name;		/* keycap on a standard US keyboard */
-/* clang-format off */
+	unsigned int position, usb, set1, set2, set3;
+	char *name; /* keycap on a standard US keyboard */
 } keycodes[] = {
+	/* clang-format off */
 	1,	53,	0x29,	0x0e,	0x0e,	"`~",
 	2,	30,	0x02,	0x16,	0x16,	"1!",
 	3,	31,	0x03,	0x1e,	0x1e,	"2@",

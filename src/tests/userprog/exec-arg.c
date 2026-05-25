@@ -1,10 +1,11 @@
 /* Tests argument passing to child processes. */
 
-#include <syscall.h>
 #include "tests/main.h"
 
+#include <syscall.h>
+
 void
-test_main (void) 
+test_main(void)
 {
-  wait (exec ("child-args childarg"));
+	wait(exec("child-args childarg"));
 }

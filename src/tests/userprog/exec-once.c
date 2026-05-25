@@ -1,11 +1,12 @@
 /* Executes and waits for a single child process. */
 
-#include <syscall.h>
 #include "tests/lib.h"
 #include "tests/main.h"
 
+#include <syscall.h>
+
 void
-test_main (void) 
+test_main(void)
 {
-  wait (exec ("child-simple"));
+	wait(exec("child-simple"));
 }
