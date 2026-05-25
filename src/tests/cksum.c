@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include "tests/cksum.h"
 
+/* clang-format off */
 static unsigned long crctab[] = {
   0x00000000,
   0x04c11db7, 0x09823b6e, 0x0d4326d9, 0x130476dc, 0x17c56b6b,
@@ -57,6 +58,7 @@ static unsigned long crctab[] = {
   0x933eb0bb, 0x97ffad0c, 0xafb010b1, 0xab710d06, 0xa6322bdf,
   0xa2f33668, 0xbcb4666d, 0xb8757bda, 0xb5365d03, 0xb1f740b4
 };
+/* clang-format on */
 
 /* This is the algorithm used by the Posix `cksum' utility. */
 unsigned long
