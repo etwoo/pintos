@@ -1,0 +1,14 @@
+---
+BasedOnStyle: LLVM
+AllowAllArgumentsOnNextLine: false
+AllowAllParametersOfDeclarationOnNextLine: false
+AllowShortFunctionsOnASingleLine: None
+AlwaysBreakAfterReturnType: TopLevelDefinitions
+BinPackArguments: false
+BinPackParameters: false
+BreakBeforeBraces: Linux
+ColumnLimit: 80
+ContinuationIndentWidth: 8
+IncludeBlocks: Regroup
+IndentWidth: 8
+UseTab:	AlignWithSpaces

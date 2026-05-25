@@ -1,12 +1,13 @@
 /* Tries to create a directory named as the empty string,
    which must return failure. */
 
-#include <syscall.h>
 #include "tests/lib.h"
 #include "tests/main.h"
 
+#include <syscall.h>
+
 void
-test_main (void) 
+test_main(void)
 {
-  CHECK (!mkdir (""), "mkdir \"\" (must return false)");
+	CHECK(!mkdir(""), "mkdir \"\" (must return false)");
 }
