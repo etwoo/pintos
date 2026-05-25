@@ -4,40 +4,39 @@
    significant amount of contention in the kernel file system
    code. */
 
+#include "tests/filesys/base/syn-read.h"
+#include "tests/lib.h"
+
 #include <random.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <syscall.h>
-#include "tests/lib.h"
-#include "tests/filesys/base/syn-read.h"
 
 static char buf[BUF_SIZE];
 
 int
-main (int argc, const char *argv[]) 
+main(int argc, const char *argv[])
 {
-  int child_idx;
-  int fd;
-  size_t i;
+	int child_idx;
+	int fd;
+	size_t i;
 
-  test_name = "child-syn-read";
-  quiet = true;
-  
-  CHECK (argc == 2, "argc must be 2, actually %d", argc);
-  child_idx = atoi (argv[1]);
+	test_name = "child-syn-read";
+	quiet = true;
 
-  random_init (0);
-  random_bytes (buf, sizeof buf);
+	CHECK(argc == 2, "argc must be 2, actually %d", argc);
+	child_idx = atoi(argv[1]);
 
-  CHECK ((fd = open (file_name)) > 1, "open \"%s\"", file_name);
-  for (i = 0; i < sizeof buf; i++) 
-    {
-      char c;
-      CHECK (read (fd, &c, 1) > 0, "read \"%s\"", file_name);
-      compare_bytes (&c, buf + i, 1, i, file_name);
-    }
-  close (fd);
+	random_init(0);
+	random_bytes(buf, sizeof buf);
 
-  return child_idx;
+	CHECK((fd = open(file_name)) > 1, "open \"%s\"", file_name);
+	for (i = 0; i < sizeof buf; i++) {
+		char c;
+		CHECK(read(fd, &c, 1) > 0, "read \"%s\"", file_name);
+		compare_bytes(&c, buf + i, 1, i, file_name);
+	}
+	close(fd);
+
+	return child_idx;
 }
-
