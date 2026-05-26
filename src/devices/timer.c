@@ -22,6 +22,14 @@
 /* Number of timer ticks since OS booted. */
 static int64_t ticks;
 
+/* Information about threads that have called timer_sleep(). */
+struct sleeper {
+	struct list_elem sleep_elem; /* List element for sleep_queue. */
+	struct semaphore sleep_wait;
+	int64_t sleep_until;
+};
+static struct list sleep_queue; /* List of `struct sleeper`. */
+
 /* Number of loops per timer tick.
    Initialized by timer_calibrate(). */
 static unsigned loops_per_tick;
@@ -39,6 +47,8 @@ timer_init(void)
 {
 	pit_configure_channel(0, 2, TIMER_FREQ);
 	intr_register_ext(0x20, timer_interrupt, "8254 Timer");
+
+	list_init(&sleep_queue);
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -87,16 +97,32 @@ timer_elapsed(int64_t then)
 	return timer_ticks() - then;
 }
 
+static bool
+sleeper_less(const struct list_elem *a_,
+             const struct list_elem *b_,
+             void *aux UNUSED)
+{
+	const struct sleeper *a = list_entry(a_, struct sleeper, sleep_elem);
+	const struct sleeper *b = list_entry(b_, struct sleeper, sleep_elem);
+	return a->sleep_until < b->sleep_until;
+}
+
 /* Sleeps for approximately TICKS timer ticks.  Interrupts must
    be turned on. */
 void
 timer_sleep(int64_t ticks)
 {
-	int64_t start = timer_ticks();
-
 	ASSERT(intr_get_level() == INTR_ON);
-	while (timer_elapsed(start) < ticks)
-		thread_yield();
+
+	struct sleeper s = {0};
+	sema_init(&s.sleep_wait, 0);
+	s.sleep_until = timer_ticks() + ticks;
+
+	list_insert_ordered(&sleep_queue, &s.sleep_elem, sleeper_less, NULL);
+	sema_down(&s.sleep_wait);
+
+	ASSERT(timer_ticks() >= s.sleep_until);
+	list_remove(&s.sleep_elem);
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -174,6 +200,16 @@ static void
 timer_interrupt(struct intr_frame *args UNUSED)
 {
 	ticks++;
+
+	struct list_elem *e = list_begin(&sleep_queue);
+	for (; e != list_end(&sleep_queue); e = list_next(e)) {
+		struct sleeper *s = list_entry(e, struct sleeper, sleep_elem);
+		if (ticks < s->sleep_until) {
+			break;
+		}
+		sema_up(&s->sleep_wait);
+	}
+
 	thread_tick();
 }
 
