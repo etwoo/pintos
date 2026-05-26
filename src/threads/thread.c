@@ -333,17 +333,21 @@ thread_foreach(thread_action_func *func, void *aux)
 	}
 }
 
-/* Sets the current thread's priority to NEW_PRIORITY. */
+/* Sets the current thread's priority to NEW_PRIORITY.
+   If the current thread no longer has the highest priority, yields. (TODO) */
 void
 thread_set_priority(int new_priority)
 {
+	ASSERT(!thread_mlfqs);
 	thread_current()->priority = new_priority;
 }
 
-/* Returns the current thread's priority. */
+/* Returns the current thread's priority.
+   In the presence of donation, returns the higher (donated) priority. (TODO) */
 int
 thread_get_priority(void)
 {
+	ASSERT(!thread_mlfqs);
 	return thread_current()->priority;
 }
 
@@ -351,6 +355,7 @@ thread_get_priority(void)
 void
 thread_set_nice(int nice UNUSED)
 {
+	ASSERT(thread_mlfqs);
 	ASSERT(nice >= -20 && nice <= 20);
 
 	/* priority = PRI_MAX - (recent_cpu / 4) - (nice * 2)
@@ -392,6 +397,7 @@ thread_set_nice(int nice UNUSED)
 int
 thread_get_nice(void)
 {
+	ASSERT(thread_mlfqs);
 	return 0; // TODO
 }
 
@@ -399,6 +405,7 @@ thread_get_nice(void)
 int
 thread_get_load_avg(void)
 {
+	ASSERT(thread_mlfqs);
 	return 0; // TODO
 }
 
@@ -406,6 +413,7 @@ thread_get_load_avg(void)
 int
 thread_get_recent_cpu(void)
 {
+	ASSERT(thread_mlfqs);
 	return 0; // TODO
 }
 
