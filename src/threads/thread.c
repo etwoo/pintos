@@ -223,6 +223,22 @@ thread_block(void)
 	schedule();
 }
 
+static bool
+priority_less(const struct list_elem *a_,
+              const struct list_elem *b_,
+              void *aux UNUSED)
+{
+	const struct thread *a = list_entry(a_, struct thread, elem);
+	const struct thread *b = list_entry(b_, struct thread, elem);
+	return a->priority < b->priority;
+}
+
+static void
+enqueue_ready_list(struct list_elem *e)
+{
+	list_insert_ordered(&ready_list, e, priority_less, NULL);
+}
+
 /* Transitions a blocked thread T to the ready-to-run state.
    This is an error if T is not blocked.  (Use thread_yield() to
    make the running thread ready.)
@@ -240,7 +256,7 @@ thread_unblock(struct thread *t)
 
 	old_level = intr_disable();
 	ASSERT(t->status == THREAD_BLOCKED);
-	list_push_back(&ready_list, &t->elem);
+	enqueue_ready_list(&t->elem);
 	t->status = THREAD_READY;
 	intr_set_level(old_level);
 }
@@ -311,7 +327,7 @@ thread_yield(void)
 
 	old_level = intr_disable();
 	if (cur != idle_thread)
-		list_push_back(&ready_list, &cur->elem);
+		enqueue_ready_list(&cur->elem);
 	cur->status = THREAD_READY;
 	schedule();
 	intr_set_level(old_level);
@@ -530,10 +546,11 @@ alloc_frame(struct thread *t, size_t size)
 static struct thread *
 next_thread_to_run(void)
 {
+	ASSERT(intr_get_level() == INTR_OFF);
 	if (list_empty(&ready_list))
 		return idle_thread;
 	else
-		return list_entry(list_pop_front(&ready_list),
+		return list_entry(list_pop_back(&ready_list),
 		                  struct thread,
 		                  elem);
 }
