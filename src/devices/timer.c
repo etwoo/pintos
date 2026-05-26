@@ -22,10 +22,10 @@
 /* Number of timer ticks since OS booted. */
 static int64_t ticks;
 
-/* Information about threads that have called timer_sleep(). */
+/* State of thread that called timer_sleep() and has yet to wake. */
 struct sleeper {
 	struct list_elem sleep_elem; /* List element for sleep_queue. */
-	struct semaphore sleep_wait;
+	struct semaphore sleep_completion;
 	int64_t sleep_until;
 };
 static struct lock sleep_queue_lock; /* Protects sleep_queue. */
@@ -117,14 +117,14 @@ timer_sleep(int64_t ticks)
 	ASSERT(intr_get_level() == INTR_ON);
 
 	struct sleeper s = {0};
-	sema_init(&s.sleep_wait, 0);
+	sema_init(&s.sleep_completion, 0);
 	s.sleep_until = timer_ticks() + ticks;
 
 	lock_acquire(&sleep_queue_lock);
 	list_insert_ordered(&sleep_queue, &s.sleep_elem, sleeper_less, NULL);
 	lock_release(&sleep_queue_lock);
 
-	sema_down(&s.sleep_wait);
+	sema_down(&s.sleep_completion);
 	ASSERT(timer_ticks() >= s.sleep_until);
 
 	lock_acquire(&sleep_queue_lock);
@@ -219,7 +219,7 @@ timer_interrupt(struct intr_frame *args UNUSED)
 			if (ticks < s->sleep_until) {
 				break;
 			}
-			sema_up(&s->sleep_wait);
+			sema_up(&s->sleep_completion);
 		}
 		lock_release(&sleep_queue_lock);
 	}
