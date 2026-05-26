@@ -350,31 +350,62 @@ thread_get_priority(void)
 void
 thread_set_nice(int nice UNUSED)
 {
-	/* Not yet implemented. */
+	ASSERT(nice >= -20 && nice <= 20);
+
+	/* priority = PRI_MAX - (recent_cpu / 4) - (nice * 2)
+
+	   ... adjusted to lie in the valid range [PRI_MIN, PRI_MAX] */
+
+	/* recent_cpu = (2*load_avg)/(2*load_avg + 1) * recent_cpu + nice
+
+	   Assumptions made by some of the tests require that these
+	   recalculations of recent_cpu be made exactly when the system tick
+	   counter reaches a multiple of a second, that is, when timer_ticks ()
+	   % TIMER_FREQ == 0, and not at any other time.
+
+	   The value of recent_cpu can be negative for a thread with a negative
+	   nice value. Do not clamp negative recent_cpu to 0.
+
+	   You may need to think about the order of calculations in this
+	   formula. We recommend computing the coefficient of recent_cpu first,
+	   then multiplying. Some students have reported that multiplying
+	   load_avg by recent_cpu directly can cause overflow. */
+
+	/* load_avg = (59/60)*load_avg + (1/60)*ready_threads,
+
+	   ... where ready_threads is the number of threads that are either
+	   running or ready to run at time of update (not including the idle
+	   thread).
+
+	   Because of assumptions made by some of the tests, load_avg must be
+	   updated exactly when the system tick counter reaches a multiple of a
+	   second, that is, when timer_ticks () % TIMER_FREQ == 0, and not at
+	   any other time. */
+
+	/* If the running thread no longer has the highest priority, yields. */
+
+	// TODO
 }
 
 /* Returns the current thread's nice value. */
 int
 thread_get_nice(void)
 {
-	/* Not yet implemented. */
-	return 0;
+	return 0; // TODO
 }
 
 /* Returns 100 times the system load average. */
 int
 thread_get_load_avg(void)
 {
-	/* Not yet implemented. */
-	return 0;
+	return 0; // TODO
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu(void)
 {
-	/* Not yet implemented. */
-	return 0;
+	return 0; // TODO
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
