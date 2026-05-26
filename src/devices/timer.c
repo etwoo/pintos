@@ -28,7 +28,8 @@ struct sleeper {
 	struct semaphore sleep_wait;
 	int64_t sleep_until;
 };
-static struct list sleep_queue; /* List of `struct sleeper`. */
+static struct lock sleep_queue_lock; /* Protects sleep_queue. */
+static struct list sleep_queue;      /* List of `struct sleeper`. */
 
 /* Number of loops per timer tick.
    Initialized by timer_calibrate(). */
@@ -48,6 +49,7 @@ timer_init(void)
 	pit_configure_channel(0, 2, TIMER_FREQ);
 	intr_register_ext(0x20, timer_interrupt, "8254 Timer");
 
+	lock_init(&sleep_queue_lock);
 	list_init(&sleep_queue);
 }
 
@@ -118,11 +120,16 @@ timer_sleep(int64_t ticks)
 	sema_init(&s.sleep_wait, 0);
 	s.sleep_until = timer_ticks() + ticks;
 
+	lock_acquire(&sleep_queue_lock);
 	list_insert_ordered(&sleep_queue, &s.sleep_elem, sleeper_less, NULL);
-	sema_down(&s.sleep_wait);
+	lock_release(&sleep_queue_lock);
 
+	sema_down(&s.sleep_wait);
 	ASSERT(timer_ticks() >= s.sleep_until);
+
+	lock_acquire(&sleep_queue_lock);
 	list_remove(&s.sleep_elem);
+	lock_release(&sleep_queue_lock);
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -199,15 +206,22 @@ timer_print_stats(void)
 static void
 timer_interrupt(struct intr_frame *args UNUSED)
 {
+	ASSERT(intr_context());
+	ASSERT(intr_get_level() == INTR_OFF);
+
 	ticks++;
 
-	struct list_elem *e = list_begin(&sleep_queue);
-	for (; e != list_end(&sleep_queue); e = list_next(e)) {
-		struct sleeper *s = list_entry(e, struct sleeper, sleep_elem);
-		if (ticks < s->sleep_until) {
-			break;
+	if (lock_try_acquire(&sleep_queue_lock)) {
+		struct list_elem *e = list_begin(&sleep_queue);
+		for (; e != list_end(&sleep_queue); e = list_next(e)) {
+			struct sleeper *s =
+				list_entry(e, struct sleeper, sleep_elem);
+			if (ticks < s->sleep_until) {
+				break;
+			}
+			sema_up(&s->sleep_wait);
 		}
-		sema_up(&s->sleep_wait);
+		lock_release(&sleep_queue_lock);
 	}
 
 	thread_tick();
