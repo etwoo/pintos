@@ -1,0 +1,21 @@
+image: debian:unstable-slim
+
+variables:
+  DEBIAN_FRONTEND: noninteractive
+
+build:gcc:
+  stage: build
+  before_script:
+    - apt-get update -qq
+    - apt-get install -qqy build-essential binutils-i686-linux-gnu gcc-i686-linux-gnu bochs
+  script:
+    - export PATH="$PWD/src/utils:$PATH"
+    - make check -C src/threads
+
+lint:clang-format:
+  stage: build
+  before_script:
+    - apt-get update -qq
+    - apt-get install -qqy clang-format git
+  script:
+    - git ls-files -z '**.c' '**.h' | xargs -0 clang-format --dry-run --Werror --

@@ -22,6 +22,14 @@
 /* Number of timer ticks since OS booted. */
 static int64_t ticks;
 
+/* State of thread that called timer_sleep() and has yet to wake. */
+struct sleeper {
+	struct list_elem sleep_elem; /* List element for sleep_queue. */
+	struct semaphore sleep_completion;
+	int64_t sleep_until;
+};
+static struct list sleep_queue; /* List of `struct sleeper`. */
+
 /* Number of loops per timer tick.
    Initialized by timer_calibrate(). */
 static unsigned loops_per_tick;
@@ -39,6 +47,8 @@ timer_init(void)
 {
 	pit_configure_channel(0, 2, TIMER_FREQ);
 	intr_register_ext(0x20, timer_interrupt, "8254 Timer");
+
+	list_init(&sleep_queue);
 }
 
 /* Calibrates loops_per_tick, used to implement brief delays. */
@@ -87,16 +97,45 @@ timer_elapsed(int64_t then)
 	return timer_ticks() - then;
 }
 
+static bool
+sleeper_less(const struct list_elem *a_,
+             const struct list_elem *b_,
+             void *aux UNUSED)
+{
+	const struct sleeper *a = list_entry(a_, struct sleeper, sleep_elem);
+	const struct sleeper *b = list_entry(b_, struct sleeper, sleep_elem);
+	return a->sleep_until < b->sleep_until;
+}
+
+static void
+timer_sleep_enqueue(struct sleeper *s)
+{
+	list_insert_ordered(&sleep_queue, &s->sleep_elem, sleeper_less, NULL);
+}
+
 /* Sleeps for approximately TICKS timer ticks.  Interrupts must
    be turned on. */
 void
 timer_sleep(int64_t ticks)
 {
-	int64_t start = timer_ticks();
-
 	ASSERT(intr_get_level() == INTR_ON);
-	while (timer_elapsed(start) < ticks)
-		thread_yield();
+
+	struct sleeper s = {0};
+	sema_init(&s.sleep_completion, 0);
+	s.sleep_until = timer_ticks() + ticks;
+
+	{
+		enum intr_level old_level = intr_disable();
+		timer_sleep_enqueue(&s);
+		intr_set_level(old_level);
+	}
+	sema_down(&s.sleep_completion);
+	ASSERT(timer_ticks() >= s.sleep_until);
+	{
+		enum intr_level old_level = intr_disable();
+		list_remove(&s.sleep_elem);
+		intr_set_level(old_level);
+	}
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -173,8 +212,21 @@ timer_print_stats(void)
 static void
 timer_interrupt(struct intr_frame *args UNUSED)
 {
+	ASSERT(intr_context());
+	ASSERT(intr_get_level() == INTR_OFF);
+
 	ticks++;
-	thread_tick();
+
+	struct list_elem *e = list_begin(&sleep_queue);
+	for (; e != list_end(&sleep_queue); e = list_next(e)) {
+		struct sleeper *s = list_entry(e, struct sleeper, sleep_elem);
+		if (ticks < s->sleep_until) {
+			break;
+		}
+		sema_up(&s->sleep_completion);
+	}
+
+	thread_tick(ticks);
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
