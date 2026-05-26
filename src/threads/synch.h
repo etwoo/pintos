@@ -19,6 +19,7 @@ void sema_self_test(void);
 /* Lock. */
 struct lock {
 	struct thread *holder;      /* Thread holding lock (for debugging). */
+	struct thread **to_recall;  /* Prio donation to recall on release.  */
 	struct semaphore semaphore; /* Binary semaphore controlling access. */
 };
 
