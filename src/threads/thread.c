@@ -9,6 +9,7 @@
 #include "threads/vaddr.h"
 
 #include <debug.h>
+#include <fixed-point.h>
 #include <random.h>
 #include <stddef.h>
 #include <stdio.h>
