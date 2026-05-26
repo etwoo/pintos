@@ -52,6 +52,30 @@ sema_init(struct semaphore *sema, unsigned value)
 	list_init(&sema->waiters);
 }
 
+static void
+donate_priority(struct lock *lock)
+{
+	ASSERT(intr_context() == INTR_OFF);
+
+	if (lock == NULL || lock->holder == NULL) {
+		return;
+	}
+
+	struct thread *holder = lock->holder;
+	ASSERT(is_thread(holder));
+
+	struct list_elem *back = list_back(&lock->semaphore.waiters);
+	struct thread *waiter = list_entry(back, struct thread, elem);
+	ASSERT(is_thread(waiter));
+	ASSERT(waiter->status == THREAD_RUNNING); /* prior to THREAD_BLOCKED */
+
+	if (waiter->priority > holder->priority) {
+		/* Make donation from highest priority waiter to lock holder. */
+		lock->priority_checkpoint = holder->priority;
+		holder->priority = waiter->priority;
+	}
+}
+
 /* Down or "P" operation on a semaphore.  Waits for SEMA's value
    to become positive and then atomically decrements it.
 
@@ -59,8 +83,8 @@ sema_init(struct semaphore *sema, unsigned value)
    interrupt handler.  This function may be called with
    interrupts disabled, but if it sleeps then the next scheduled
    thread will probably turn interrupts back on. */
-void
-sema_down(struct semaphore *sema)
+static void
+sema_down_impl(struct semaphore *sema, struct lock *parent)
 {
 	enum intr_level old_level;
 
@@ -69,11 +93,21 @@ sema_down(struct semaphore *sema)
 
 	old_level = intr_disable();
 	while (sema->value == 0) {
-		list_push_back(&sema->waiters, &thread_current()->elem);
+		list_insert_ordered(&sema->waiters,
+		                    &thread_current()->elem,
+		                    priority_less,
+		                    NULL);
+		donate_priority(parent);
 		thread_block();
 	}
 	sema->value--;
 	intr_set_level(old_level);
+}
+
+void
+sema_down(struct semaphore *sema)
+{
+	sema_down_impl(sema, NULL);
 }
 
 /* Down or "P" operation on a semaphore, but only if the
@@ -113,7 +147,7 @@ sema_up(struct semaphore *sema)
 
 	old_level = intr_disable();
 	if (!list_empty(&sema->waiters))
-		thread_unblock(list_entry(list_pop_front(&sema->waiters),
+		thread_unblock(list_entry(list_pop_back(&sema->waiters),
 		                          struct thread,
 		                          elem));
 	sema->value++;
@@ -177,6 +211,7 @@ lock_init(struct lock *lock)
 
 	lock->holder = NULL;
 	sema_init(&lock->semaphore, 1);
+	lock->priority_checkpoint = PRI_INVALID;
 }
 
 /* Acquires LOCK, sleeping until it becomes available if
@@ -194,7 +229,7 @@ lock_acquire(struct lock *lock)
 	ASSERT(!intr_context());
 	ASSERT(!lock_held_by_current_thread(lock));
 
-	sema_down(&lock->semaphore);
+	sema_down_impl(&lock->semaphore, lock);
 	lock->holder = thread_current();
 }
 
@@ -212,6 +247,7 @@ lock_try_acquire(struct lock *lock)
 	ASSERT(lock != NULL);
 	ASSERT(!lock_held_by_current_thread(lock));
 
+	// TODO: priority donation, like lock_acquire()
 	success = sema_try_down(&lock->semaphore);
 	if (success)
 		lock->holder = thread_current();
@@ -229,8 +265,17 @@ lock_release(struct lock *lock)
 	ASSERT(lock != NULL);
 	ASSERT(lock_held_by_current_thread(lock));
 
+	if (lock->priority_checkpoint != PRI_INVALID) {
+		/* Recall donation from lock holder upon release. */
+		ASSERT(lock->holder->priority > lock->priority_checkpoint);
+		lock->holder->priority = lock->priority_checkpoint;
+		lock->priority_checkpoint = PRI_INVALID;
+	}
 	lock->holder = NULL;
 	sema_up(&lock->semaphore);
+
+	/* Yield, in case releasing lock above recalled a priority donation. */
+	thread_yield(); // TODO: try removing?
 }
 
 /* Returns true if the current thread holds LOCK, false

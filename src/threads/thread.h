@@ -22,6 +22,7 @@ typedef int tid_t;
 #define PRI_MIN 0      /* Lowest priority. */
 #define PRI_DEFAULT 31 /* Default priority. */
 #define PRI_MAX 63     /* Highest priority. */
+#define PRI_INVALID -1 /* Invalid sentinel priority. */
 
 /* A kernel thread or user process.
 
@@ -100,6 +101,8 @@ struct thread {
 	unsigned magic; /* Detects stack overflow. */
 };
 
+bool priority_less(const struct list_elem *, const struct list_elem *, void *);
+
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
    Controlled by kernel command-line option "-o mlfqs". */
@@ -135,5 +138,7 @@ int thread_get_nice(void);
 void thread_set_nice(int);
 int thread_get_recent_cpu(void);
 int thread_get_load_avg(void);
+
+bool is_thread(struct thread *t);
 
 #endif /* threads/thread.h */

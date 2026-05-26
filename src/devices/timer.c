@@ -28,8 +28,7 @@ struct sleeper {
 	struct semaphore sleep_completion;
 	int64_t sleep_until;
 };
-static struct lock sleep_queue_lock; /* Protects sleep_queue. */
-static struct list sleep_queue;      /* List of `struct sleeper`. */
+static struct list sleep_queue; /* List of `struct sleeper`. */
 
 /* Number of loops per timer tick.
    Initialized by timer_calibrate(). */
@@ -49,7 +48,6 @@ timer_init(void)
 	pit_configure_channel(0, 2, TIMER_FREQ);
 	intr_register_ext(0x20, timer_interrupt, "8254 Timer");
 
-	lock_init(&sleep_queue_lock);
 	list_init(&sleep_queue);
 }
 
@@ -109,6 +107,12 @@ sleeper_less(const struct list_elem *a_,
 	return a->sleep_until < b->sleep_until;
 }
 
+static void
+timer_sleep_enqueue(struct sleeper *s)
+{
+	list_insert_ordered(&sleep_queue, &s->sleep_elem, sleeper_less, NULL);
+}
+
 /* Sleeps for approximately TICKS timer ticks.  Interrupts must
    be turned on. */
 void
@@ -120,16 +124,18 @@ timer_sleep(int64_t ticks)
 	sema_init(&s.sleep_completion, 0);
 	s.sleep_until = timer_ticks() + ticks;
 
-	lock_acquire(&sleep_queue_lock);
-	list_insert_ordered(&sleep_queue, &s.sleep_elem, sleeper_less, NULL);
-	lock_release(&sleep_queue_lock);
-
+	{
+		enum intr_level old_level = intr_disable();
+		timer_sleep_enqueue(&s);
+		intr_set_level(old_level);
+	}
 	sema_down(&s.sleep_completion);
 	ASSERT(timer_ticks() >= s.sleep_until);
-
-	lock_acquire(&sleep_queue_lock);
-	list_remove(&s.sleep_elem);
-	lock_release(&sleep_queue_lock);
+	{
+		enum intr_level old_level = intr_disable();
+		list_remove(&s.sleep_elem);
+		intr_set_level(old_level);
+	}
 }
 
 /* Sleeps for approximately MS milliseconds.  Interrupts must be
@@ -211,17 +217,13 @@ timer_interrupt(struct intr_frame *args UNUSED)
 
 	ticks++;
 
-	if (lock_try_acquire(&sleep_queue_lock)) {
-		struct list_elem *e = list_begin(&sleep_queue);
-		for (; e != list_end(&sleep_queue); e = list_next(e)) {
-			struct sleeper *s =
-				list_entry(e, struct sleeper, sleep_elem);
-			if (ticks < s->sleep_until) {
-				break;
-			}
-			sema_up(&s->sleep_completion);
+	struct list_elem *e = list_begin(&sleep_queue);
+	for (; e != list_end(&sleep_queue); e = list_next(e)) {
+		struct sleeper *s = list_entry(e, struct sleeper, sleep_elem);
+		if (ticks < s->sleep_until) {
+			break;
 		}
-		lock_release(&sleep_queue_lock);
+		sema_up(&s->sleep_completion);
 	}
 
 	thread_tick();

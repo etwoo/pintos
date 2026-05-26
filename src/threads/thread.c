@@ -67,11 +67,20 @@ static void idle(void *aux UNUSED);
 static struct thread *running_thread(void);
 static struct thread *next_thread_to_run(void);
 static void init_thread(struct thread *, const char *name, int priority);
-static bool is_thread(struct thread *) UNUSED;
 static void *alloc_frame(struct thread *, size_t size);
 static void schedule(void);
 void thread_schedule_tail(struct thread *prev);
 static tid_t allocate_tid(void);
+
+bool
+priority_less(const struct list_elem *a_,
+              const struct list_elem *b_,
+              void *aux UNUSED)
+{
+	const struct thread *a = list_entry(a_, struct thread, elem);
+	const struct thread *b = list_entry(b_, struct thread, elem);
+	return a->priority < b->priority;
+}
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -204,7 +213,16 @@ thread_create(const char *name, int priority, thread_func *function, void *aux)
 	/* Add to run queue. */
 	thread_unblock(t);
 
+	/* Yield, in case new thread donates priority. */
+	thread_yield(); // TODO: try removing?
+
 	return tid;
+}
+
+static void
+sort_ready_list(void)
+{
+	list_sort(&ready_list, priority_less, NULL);
 }
 
 /* Puts the current thread to sleep.  It will not be scheduled
@@ -219,23 +237,15 @@ thread_block(void)
 	ASSERT(!intr_context());
 	ASSERT(intr_get_level() == INTR_OFF);
 
+	sort_ready_list();
 	thread_current()->status = THREAD_BLOCKED;
 	schedule();
-}
-
-static bool
-priority_less(const struct list_elem *a_,
-              const struct list_elem *b_,
-              void *aux UNUSED)
-{
-	const struct thread *a = list_entry(a_, struct thread, elem);
-	const struct thread *b = list_entry(b_, struct thread, elem);
-	return a->priority < b->priority;
 }
 
 static void
 enqueue_ready_list(struct list_elem *e)
 {
+	sort_ready_list();
 	list_insert_ordered(&ready_list, e, priority_less, NULL);
 }
 
@@ -496,7 +506,7 @@ running_thread(void)
 }
 
 /* Returns true if T appears to point to a valid thread. */
-static bool
+bool
 is_thread(struct thread *t)
 {
 	return t != NULL && t->magic == THREAD_MAGIC;
