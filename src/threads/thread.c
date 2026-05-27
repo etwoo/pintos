@@ -204,8 +204,8 @@ thread_create(const char *name, int priority, thread_func *function, void *aux)
 	/* Add to run queue. */
 	thread_unblock(t);
 
-	/* Yield, in case new thread donates priority. */
-	thread_yield(); // TODO: try removing?
+	/* Yield, in case newly created thread donates priority. */
+	thread_yield();
 
 	return tid;
 }
@@ -343,7 +343,7 @@ thread_set_priority(int new_priority)
 {
 	ASSERT(!thread_mlfqs);
 	thread_current()->priority = new_priority;
-	thread_yield(); // TODO: fastpath if current thread retains highest pri?
+	thread_yield();
 }
 
 int
