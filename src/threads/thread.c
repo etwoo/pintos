@@ -676,6 +676,8 @@ get_highest_priority(struct list *threads, enum get_mode mode)
 		    /* If two threads have matching priorities, tiebreak by
 		       choosing thread with greater tid_t, as a heuristic for
 		       preferring child threads over parent threads. */
+		    // TODO: round-robin across ties for highest priority
+		    // lack of round robin caught by testcase: priority-fifo
 		    (priority == max_priority &&
 		     candidate->tid > result->tid)) {
 			max_priority = priority;
