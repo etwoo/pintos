@@ -379,6 +379,7 @@ cond_signal(struct condition *cond, struct lock *lock UNUSED)
 			list_entry(list_begin(&candidate_sema->waiters),
 		                   struct thread,
 		                   elem);
+
 		const int priority = thread_get_priority_of(candidate_thread);
 		if (to_wake == NULL || priority > max_priority) {
 			max_priority = priority;
