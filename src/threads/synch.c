@@ -53,13 +53,6 @@ sema_init(struct semaphore *sema, unsigned value)
 	list_init(&sema->waiters);
 }
 
-static struct thread *
-get_best_waiter(struct semaphore *sema, enum get_mode mode)
-{
-	ASSERT(!list_empty(&sema->waiters));
-	return get_highest_priority(&sema->waiters, mode);
-}
-
 static void
 donate_priority(struct thread *waiter, struct lock *lock)
 {
@@ -157,7 +150,7 @@ sema_up(struct semaphore *sema)
 
 	old_level = intr_disable();
 	if (!list_empty(&sema->waiters))
-		thread_unblock(get_best_waiter(sema, HIPRI_POP));
+		thread_unblock(thread_pop_by_priority(&sema->waiters));
 	sema->value++;
 	intr_set_level(old_level);
 
@@ -387,7 +380,6 @@ cond_signal(struct condition *cond, struct lock *lock UNUSED)
 		                   struct thread,
 		                   elem);
 		const int priority = thread_get_priority_of(candidate_thread);
-
 		if (to_wake == NULL || priority > max_priority) {
 			max_priority = priority;
 			to_wake = candidate_sema;

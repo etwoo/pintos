@@ -568,7 +568,7 @@ next_thread_to_run(void)
 	if (list_empty(&ready_list))
 		return idle_thread;
 	else
-		return get_highest_priority(&ready_list, HIPRI_POP);
+		return thread_pop_by_priority(&ready_list);
 }
 
 /* Completes a thread switch by activating the new thread's page
@@ -659,7 +659,7 @@ allocate_tid(void)
 uint32_t thread_stack_ofs = offsetof(struct thread, stack);
 
 struct thread *
-get_highest_priority(struct list *threads, enum get_mode mode)
+thread_pop_by_priority(struct list *threads)
 {
 	ASSERT(!list_empty(threads));
 	int max_priority = PRI_MIN;
@@ -687,13 +687,7 @@ get_highest_priority(struct list *threads, enum get_mode mode)
 	}
 
 	ASSERT(max_elem != NULL);
-	switch (mode) {
-	case HIPRI_PEEK:
-		break;
-	case HIPRI_POP:
-		list_remove(max_elem);
-		break;
-	}
+	list_remove(max_elem);
 
 	ASSERT(result != NULL);
 	return result;

@@ -139,11 +139,6 @@ int thread_get_recent_cpu(void);
 int thread_get_load_avg(void);
 
 bool is_thread(struct thread *t);
-
-enum get_mode {
-	HIPRI_PEEK,
-	HIPRI_POP,
-};
-struct thread *get_highest_priority(struct list *threads, enum get_mode mode);
+struct thread *thread_pop_by_priority(struct list *threads);
 
 #endif /* threads/thread.h */
