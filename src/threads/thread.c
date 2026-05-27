@@ -366,6 +366,7 @@ thread_set_priority(int new_priority)
 {
 	ASSERT(!thread_mlfqs);
 	thread_current()->priority = new_priority;
+	thread_yield(); // TODO: skip when possible?
 }
 
 /* Returns the current thread's priority.
