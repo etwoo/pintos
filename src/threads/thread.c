@@ -663,7 +663,6 @@ thread_pop_by_priority(struct list *threads)
 {
 	ASSERT(!list_empty(threads));
 	int max_priority = PRI_MIN;
-	struct list_elem *max_elem = NULL;
 	struct thread *result = NULL;
 
 	struct list_elem *e = list_begin(threads);
@@ -681,14 +680,11 @@ thread_pop_by_priority(struct list *threads)
 		    (priority == max_priority &&
 		     candidate->tid > result->tid)) {
 			max_priority = priority;
-			max_elem = e;
 			result = candidate;
 		}
 	}
 
-	ASSERT(max_elem != NULL);
-	list_remove(max_elem);
-
 	ASSERT(result != NULL);
+	list_remove(&result->elem);
 	return result;
 }
