@@ -1,6 +1,6 @@
 #include "threads/thread.h"
 
-#include "devices/timer.h"
+#include "devices/timer.h" /* for TIMER_FREQ */
 #include "threads/flags.h"
 #include "threads/interrupt.h"
 #include "threads/intr-stubs.h"
@@ -11,7 +11,7 @@
 
 #include <array.h>
 #include <debug.h>
-#include <limits.h>
+#include <limits.h> /* for INT_MAX */
 #include <random.h>
 #include <stddef.h>
 #include <stdio.h>
