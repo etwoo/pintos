@@ -58,7 +58,7 @@ donate_priority(struct thread *waiter, struct lock *lock)
 {
 	ASSERT(intr_context() == INTR_OFF);
 
-	if (lock == NULL || lock->holder == NULL) {
+	if (thread_mlfqs || lock == NULL || lock->holder == NULL) {
 		return;
 	}
 

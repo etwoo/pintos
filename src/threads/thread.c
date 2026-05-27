@@ -10,7 +10,6 @@
 
 #include <array.h>
 #include <debug.h>
-#include <fixed-point.h>
 #include <random.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -31,6 +30,9 @@ static struct list ready_list;
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
+
+/* System load average. Must disable interrupts before accessing. */
+static struct fix_t system_load_avg;
 
 /* Idle thread. */
 static struct thread *idle_thread;
@@ -72,6 +74,9 @@ static void *alloc_frame(struct thread *, size_t size);
 static void schedule(void);
 void thread_schedule_tail(struct thread *prev);
 static tid_t allocate_tid(void);
+static void thread_update_load_avg(void);
+static void thread_update_recent_cpu(void);
+static int thread_get_priority_of_mlfqs(struct thread *t);
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -94,6 +99,7 @@ thread_init(void)
 	lock_init(&tid_lock);
 	list_init(&ready_list);
 	list_init(&all_list);
+	system_load_avg = i32_to_fixed(0);
 
 	/* Set up a thread structure for the running thread. */
 	initial_thread = running_thread();
@@ -135,6 +141,14 @@ thread_tick(void)
 #endif
 	else
 		kernel_ticks++;
+
+	const int system_ticks = idle_ticks + user_ticks + kernel_ticks;
+	const bool once_per_second = (system_ticks % TIMER_FREQ == 0);
+	if (thread_mlfqs && once_per_second) {
+		// TODO: can some of this work be moved out of timer_interrupt?
+		thread_update_load_avg();
+		thread_update_recent_cpu();
+	}
 
 	/* Enforce preemption. */
 	if (++thread_ticks >= TIME_SLICE)
@@ -342,6 +356,7 @@ void
 thread_set_priority(int new_priority)
 {
 	ASSERT(!thread_mlfqs);
+	ASSERT(PRI_MIN <= new_priority && new_priority <= PRI_MAX);
 	thread_current()->priority = new_priority;
 	thread_yield();
 }
@@ -349,23 +364,26 @@ thread_set_priority(int new_priority)
 int
 thread_get_priority_of(struct thread *t)
 {
-	ASSERT(!thread_mlfqs);
 	ASSERT(is_thread(t));
+	int result = PRI_DEFAULT;
 
-	int result = t->priority;
-
-	// TODO: lock donation pointers? or disable interrupts?
-	for (size_t i = 0; i < ARRAY_SIZE(t->donate); ++i) {
-		struct thread *candidate = t->donate[i];
-		if (candidate == NULL) {
-			continue;
-		}
-		if (!is_thread(candidate)) { // TODO: weakref?
-			continue;
-		}
-		const int donated = thread_get_priority_of(candidate);
-		if (donated > result) {
-			result = donated;
+	if (thread_mlfqs) {
+		result = thread_get_priority_of_mlfqs(t);
+	} else {
+		result = t->priority;
+		// TODO: lock donation pointers? or disable interrupts?
+		for (size_t i = 0; i < ARRAY_SIZE(t->donate); ++i) {
+			struct thread *candidate = t->donate[i];
+			if (candidate == NULL) {
+				continue;
+			}
+			if (!is_thread(candidate)) { // TODO: weakref?
+				continue;
+			}
+			const int donated = thread_get_priority_of(candidate);
+			if (donated > result) {
+				result = donated;
+			}
 		}
 	}
 
@@ -378,48 +396,18 @@ thread_get_priority_of(struct thread *t)
 int
 thread_get_priority(void)
 {
-	ASSERT(!thread_mlfqs);
 	return thread_get_priority_of(thread_current());
 }
 
-/* Sets the current thread's nice value to NICE. */
+/* Sets the current thread's nice value to NICE.
+   If the current thread no longer has the highest priority, yields. */
 void
-thread_set_nice(int nice) // TODO: advanced_scheduler
+thread_set_nice(int new_nice)
 {
 	ASSERT(thread_mlfqs);
-	ASSERT(nice >= -20 && nice <= 20);
-
-	/* priority = PRI_MAX - (recent_cpu / 4) - (nice * 2)
-
-	   ... adjusted to lie in the valid range [PRI_MIN, PRI_MAX] */
-
-	/* recent_cpu = (2*load_avg)/(2*load_avg + 1) * recent_cpu + nice
-
-	   Assumptions made by some of the tests require that these
-	   recalculations of recent_cpu be made exactly when the system tick
-	   counter reaches a multiple of a second, that is, when timer_ticks ()
-	   % TIMER_FREQ == 0, and not at any other time.
-
-	   The value of recent_cpu can be negative for a thread with a negative
-	   nice value. Do not clamp negative recent_cpu to 0.
-
-	   You may need to think about the order of calculations in this
-	   formula. We recommend computing the coefficient of recent_cpu first,
-	   then multiplying. Some students have reported that multiplying
-	   load_avg by recent_cpu directly can cause overflow. */
-
-	/* load_avg = (59/60)*load_avg + (1/60)*ready_threads,
-
-	   ... where ready_threads is the number of threads that are either
-	   running or ready to run at time of update (not including the idle
-	   thread).
-
-	   Because of assumptions made by some of the tests, load_avg must be
-	   updated exactly when the system tick counter reaches a multiple of a
-	   second, that is, when timer_ticks () % TIMER_FREQ == 0, and not at
-	   any other time. */
-
-	/* If the running thread no longer has the highest priority, yields. */
+	ASSERT(NICE_MIN <= new_nice && new_nice <= NICE_MAX);
+	thread_current()->nice = new_nice;
+	thread_yield();
 }
 
 /* Returns the current thread's nice value. */
@@ -427,7 +415,15 @@ int
 thread_get_nice(void)
 {
 	ASSERT(thread_mlfqs);
-	return 0; // TODO: advanced_scheduler
+	return thread_current()->nice;
+}
+
+static int
+to_int_100x(struct fix_t x)
+{
+	int32_t n = fixed_to_i32_rounding_zero(mul_fixed_i32(x, 100));
+	ASSERT(INT_MIN <= n && n <= INT_MAX); /* safe to cast int32_t to int */
+	return n;
 }
 
 /* Returns 100 times the system load average. */
@@ -435,7 +431,7 @@ int
 thread_get_load_avg(void)
 {
 	ASSERT(thread_mlfqs);
-	return 0; // TODO: advanced_scheduler
+	return to_int_100x(system_load_avg);
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
@@ -443,7 +439,7 @@ int
 thread_get_recent_cpu(void)
 {
 	ASSERT(thread_mlfqs);
-	return 0; // TODO: advanced_scheduler
+	return to_int_100x(thread_current()->recent_cpu);
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -524,6 +520,7 @@ init_thread(struct thread *t, const char *name, int priority)
 
 	ASSERT(t != NULL);
 	ASSERT(PRI_MIN <= priority && priority <= PRI_MAX);
+	ASSERT(!thread_mlfqs || priority == PRI_DEFAULT);
 	ASSERT(name != NULL);
 
 	memset(t, 0, sizeof *t);
@@ -534,6 +531,10 @@ init_thread(struct thread *t, const char *name, int priority)
 	for (size_t i = 0; i < ARRAY_SIZE(t->donate); ++i) {
 		ASSERT(t->donate[i] == NULL);
 	}
+	// TODO: how to inherit nice from parent thread?
+	t->nice = NICE_DEFAULT;
+	// TODO: how to inherit seed recent_cpu from parent thread?
+	t->recent_cpu = i32_to_fixed(0);
 	t->magic = THREAD_MAGIC;
 
 	old_level = intr_disable();
@@ -686,4 +687,69 @@ thread_pop_by_priority(struct list *threads)
 	ASSERT(result != NULL);
 	list_remove(&result->elem);
 	return result;
+}
+
+static void
+thread_update_load_avg(void)
+{
+	ASSERT(thread_mlfqs);
+	ASSERT(intr_context());
+	ASSERT(intr_get_level() == INTR_OFF);
+
+	/* load_avg = (59/60)*load_avg + (1/60)*ready_threads */
+	const struct fix_t load_avg_term =
+		mul_fixed_fixed(div_fixed_i32(i32_to_fixed(59), 60),
+	                        system_load_avg);
+	const size_t ready_threads = list_size(&ready_list);
+	ASSERT(ready_threads <= INT32_MAX); /* safe to cast size_t to int32_t */
+	const struct fix_t ready_term =
+		mul_fixed_i32(div_fixed_i32(i32_to_fixed(1), 60),
+	                      ready_threads);
+	system_load_avg = add_fixed_fixed(load_avg_term, ready_term);
+}
+
+static void
+thread_update_recent_cpu(void)
+{
+	ASSERT(thread_mlfqs);
+	ASSERT(intr_context());
+	ASSERT(intr_get_level() == INTR_OFF);
+
+	struct list_elem *e = list_begin(&ready_list);
+	for (; e != list_end(&ready_list); e = list_next(e)) {
+		struct thread *t = list_entry(e, struct thread, allelem);
+		/*
+		   recent_cpu =
+		   ((2 * load_avg) / (2 * load_avg + 1)) * recent_cpu + nice
+		 */
+		const struct fix_t load_avg_2x =
+			mul_fixed_i32(system_load_avg, 2);
+		const struct fix_t coefficient =
+			div_fixed_fixed(load_avg_2x,
+		                        add_fixed_i32(load_avg_2x, 1));
+		const struct fix_t base_term =
+			mul_fixed_fixed(coefficient, t->recent_cpu);
+		// TODO: avoid overflow on coefficient * recent_cpu (above)?
+		t->recent_cpu = add_fixed_i32(base_term, t->nice);
+	}
+}
+
+static int
+thread_get_priority_of_mlfqs(struct thread *t)
+{
+	ASSERT(thread_mlfqs);
+	ASSERT(is_thread(t));
+	ASSERT(t->priority == PRI_DEFAULT);
+
+	/* priority = PRI_MAX - (recent_cpu / 4) - (nice * 2) */
+	const int32_t recent_cpu_term =
+		fixed_to_i32_rounding_nearest(div_fixed_i32(t->recent_cpu, 4));
+	const int32_t priority = PRI_MAX - recent_cpu_term - (t->nice * 2);
+
+	/* Clamp to range [PRI_MIN, PRI_MAX]. */
+	const int clamped =
+		((priority <= PRI_MIN)
+	                 ? PRI_MIN
+	                 : ((priority >= PRI_MAX) ? PRI_MAX : priority));
+	return clamped;
 }

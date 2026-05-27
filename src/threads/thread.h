@@ -2,6 +2,7 @@
 #define THREADS_THREAD_H
 
 #include <debug.h>
+#include <fixed-point.h>
 #include <list.h>
 #include <stdint.h>
 
@@ -22,6 +23,11 @@ typedef int tid_t;
 #define PRI_MIN 0      /* Lowest priority. */
 #define PRI_DEFAULT 31 /* Default priority. */
 #define PRI_MAX 63     /* Highest priority. */
+
+/* Thread niceness. */
+#define NICE_MIN -20   /* Least nice (most selfish). */
+#define NICE_DEFAULT 0 /* Default nice. */
+#define NICE_MAX 20    /* Most nice (least selfish). */
 
 /* A kernel thread or user process.
 
@@ -87,6 +93,8 @@ struct thread {
 	uint8_t *stack;            /* Saved stack pointer. */
 	int priority;              /* Priority. */
 	struct thread *donate[8];  /* Priority donation. (TODO: weakref) */
+	int nice;                  /* thread_mlfqs: niceness. */
+	struct fix_t recent_cpu;   /* thread_mlfqs: recent_cpu. */
 	struct list_elem allelem;  /* List element for all threads list. */
 
 	/* Shared between thread.c and synch.c. */
