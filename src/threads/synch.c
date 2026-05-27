@@ -265,8 +265,7 @@ lock_release(struct lock *lock)
 	ASSERT(lock != NULL);
 	ASSERT(lock_held_by_current_thread(lock));
 
-	const bool recall_donation = (lock->holder->donation != NULL);
-	if (recall_donation) {
+	if (lock->holder->donation != NULL) {
 		ASSERT(is_thread(lock->holder->donation));
 		ASSERT(lock->holder->priority <
 		       lock->holder->donation->priority);
@@ -277,9 +276,7 @@ lock_release(struct lock *lock)
 	sema_up(&lock->semaphore);
 
 	/* Yield, in case recalled donation above leads to new hipri thread. */
-	if (recall_donation) {
-		thread_yield(); // TODO: try removing?
-	}
+	thread_yield(); // TODO: try removing?
 }
 
 /* Returns true if the current thread holds LOCK, false
