@@ -664,6 +664,7 @@ get_highest_priority(struct list *threads, enum get_mode mode)
 	ASSERT(!list_empty(threads));
 
 	int max = PRI_MIN;
+	tid_t max_tid = TID_ERROR;
 	struct list_elem *max_elem = NULL;
 	struct thread *result = NULL;
 
@@ -671,21 +672,12 @@ get_highest_priority(struct list *threads, enum get_mode mode)
 	for (; e != list_end(threads); e = list_next(e)) {
 		struct thread *candidate = list_entry(e, struct thread, elem);
 		const int priority = thread_get_priority_of(candidate);
-		/*
-		 * Q: Why (priority >= max), rather than (priority > max)?
-		 *
-		 * A: For ties between threads of equal priority, like threads
-		 *    queued in semaphore.waiters, `>=` selects the later
-		 *    candidate. This acts as a heuristic for prioritizing
-		 *    child threads over parent threads, which matters for
-		 *    tests like priority-donate-one. In the future, we may
-		 *    make this more explicit by sorting on (priority, tid)
-		 *    instead of only priority.
-		 *
-		 * TODO: >= instead of > seems to regress test priority-fifo
-		 */
-		if (result == NULL || priority >= max) {
+		const tid_t tid = candidate->tid;
+		if (result == NULL || /* set default on first loop iteration */
+		    priority > max || /* new winning thread by priority */
+		    (priority == max && tid > max_tid)) { /* tiebreak by tid */
 			max = priority;
+			max_tid = tid;
 			max_elem = e;
 			result = candidate;
 		}
