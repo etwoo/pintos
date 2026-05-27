@@ -662,9 +662,7 @@ struct thread *
 get_highest_priority(struct list *threads, enum get_mode mode)
 {
 	ASSERT(!list_empty(threads));
-
-	int max = PRI_MIN;
-	tid_t max_tid = TID_ERROR;
+	int max_priority = PRI_MIN;
 	struct list_elem *max_elem = NULL;
 	struct thread *result = NULL;
 
@@ -672,12 +670,15 @@ get_highest_priority(struct list *threads, enum get_mode mode)
 	for (; e != list_end(threads); e = list_next(e)) {
 		struct thread *candidate = list_entry(e, struct thread, elem);
 		const int priority = thread_get_priority_of(candidate);
-		const tid_t tid = candidate->tid;
-		if (result == NULL || /* set default on first loop iteration */
-		    priority > max || /* new winning thread by priority */
-		    (priority == max && tid > max_tid)) { /* tiebreak by tid */
-			max = priority;
-			max_tid = tid;
+		if (result == NULL ||
+		    /* Thread with highest computed priority wins. */
+		    priority > max_priority ||
+		    /* If two threads have matching priorities, tiebreak by
+		       choosing thread with greater tid_t, as a heuristic for
+		       preferring child threads over parent threads. */
+		    (priority == max_priority &&
+		     candidate->tid > result->tid)) {
+			max_priority = priority;
 			max_elem = e;
 			result = candidate;
 		}
