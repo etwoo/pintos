@@ -349,16 +349,19 @@ int
 thread_get_priority_of(struct thread *t)
 {
 	ASSERT(!thread_mlfqs);
-	int result = t->priority;
+	ASSERT(is_thread(t));
 
+	int result = t->priority;
 	const struct thread *root = t;
 	do {
-		t = t->donation;
 		if (t->priority > result) {
 			result = t->priority;
 		}
+		// TODO: lock donation pointers? or disable interrupts?
+		t = t->donation;
 	} while (t != NULL && t != root);
 
+	ASSERT(result >= PRI_MIN && result <= PRI_MAX);
 	return result;
 }
 
