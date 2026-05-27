@@ -61,7 +61,7 @@ get_best_waiter(struct semaphore *sema, enum get_mode mode)
 }
 
 static void
-donate_priority(struct lock *lock)
+donate_priority(struct thread *waiter, struct lock *lock)
 {
 	ASSERT(intr_context() == INTR_OFF);
 
@@ -72,10 +72,8 @@ donate_priority(struct lock *lock)
 	struct thread *holder = lock->holder;
 	ASSERT(is_thread(holder));
 
-	struct thread *waiter = get_best_waiter(&lock->semaphore, HIPRI_PEEK);
 	ASSERT(is_thread(waiter));
-	ASSERT(waiter->status == THREAD_RUNNING || /* prior to thread_block() */
-	       waiter->status == THREAD_BLOCKED);  /* ... or already blocked  */
+	ASSERT(waiter->status == THREAD_RUNNING); /* prior to thread_block() */
 
 	if (thread_get_priority_of(waiter) > thread_get_priority_of(holder)) {
 		/* Make donation from highest priority waiter to lock holder. */
@@ -107,8 +105,9 @@ sema_down_impl(struct semaphore *sema, struct lock *parent)
 
 	old_level = intr_disable();
 	while (sema->value == 0) {
-		list_push_back(&sema->waiters, &thread_current()->elem);
-		donate_priority(parent);
+		struct thread *to_sleep = thread_current();
+		list_push_back(&sema->waiters, &to_sleep->elem);
+		donate_priority(to_sleep, parent);
 		thread_block();
 	}
 	sema->value--;
