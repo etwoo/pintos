@@ -31,6 +31,7 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 
+#include <array.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -78,7 +79,14 @@ donate_priority(struct lock *lock)
 
 	if (thread_get_priority_of(waiter) > thread_get_priority_of(holder)) {
 		/* Make donation from highest priority waiter to lock holder. */
-		holder->donation = waiter;
+		for (size_t i = 0; i < ARRAY_SIZE(holder->donate); ++i) {
+			if (holder->donate[i] == NULL) {
+				/* Populate first available donation slot. */
+				holder->donate[i] = waiter;
+				lock->to_recall = &holder->donate[i];
+				break;
+			}
+		}
 	}
 }
 
@@ -211,6 +219,7 @@ lock_init(struct lock *lock)
 	ASSERT(lock != NULL);
 
 	lock->holder = NULL;
+	lock->to_recall = NULL;
 	sema_init(&lock->semaphore, 1);
 }
 
@@ -265,11 +274,10 @@ lock_release(struct lock *lock)
 	ASSERT(lock != NULL);
 	ASSERT(lock_held_by_current_thread(lock));
 
-	if (lock->holder->donation != NULL) {
-		ASSERT(is_thread(lock->holder->donation));
-		ASSERT(lock->holder->priority <
-		       lock->holder->donation->priority);
-		lock->holder->donation = NULL;
+	if (lock->to_recall != NULL && *lock->to_recall != NULL) {
+		ASSERT(is_thread(*lock->to_recall));
+		ASSERT(lock->holder->priority < (**lock->to_recall).priority);
+		*lock->to_recall = NULL; /* Use handle to recall donation. */
 	}
 
 	lock->holder = NULL;

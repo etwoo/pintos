@@ -8,6 +8,7 @@
 #include "threads/synch.h"
 #include "threads/vaddr.h"
 
+#include <array.h>
 #include <debug.h>
 #include <fixed-point.h>
 #include <random.h>
@@ -352,14 +353,21 @@ thread_get_priority_of(struct thread *t)
 	ASSERT(is_thread(t));
 
 	int result = t->priority;
-	const struct thread *root = t;
-	do {
-		if (t->priority > result) {
-			result = t->priority;
+
+	// TODO: lock donation pointers? or disable interrupts?
+	for (size_t i = 0; i < ARRAY_SIZE(t->donate); ++i) {
+		struct thread *candidate = t->donate[i];
+		if (candidate == NULL) {
+			continue;
 		}
-		// TODO: lock donation pointers? or disable interrupts?
-		t = t->donation;
-	} while (t != NULL && t != root);
+		if (!is_thread(candidate)) { // TODO: weakref?
+			continue;
+		}
+		const int donated = thread_get_priority_of(candidate);
+		if (donated > result) {
+			result = donated;
+		}
+	}
 
 	ASSERT(result >= PRI_MIN && result <= PRI_MAX);
 	return result;
@@ -525,7 +533,9 @@ init_thread(struct thread *t, const char *name, int priority)
 	strlcpy(t->name, name, sizeof t->name);
 	t->stack = (uint8_t *)t + PGSIZE;
 	t->priority = priority;
-	ASSERT(t->donation == NULL);
+	for (size_t i = 0; i < ARRAY_SIZE(t->donate); ++i) {
+		ASSERT(t->donate[i] == NULL);
+	}
 	t->magic = THREAD_MAGIC;
 
 	old_level = intr_disable();
