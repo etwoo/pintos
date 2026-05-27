@@ -663,23 +663,24 @@ thread_pop_by_priority(struct list *threads)
 {
 	ASSERT(!list_empty(threads));
 	int max_priority = PRI_MIN;
+	bool max_donated = false;
 	struct thread *result = NULL;
 
 	struct list_elem *e = list_begin(threads);
 	for (; e != list_end(threads); e = list_next(e)) {
 		struct thread *candidate = list_entry(e, struct thread, elem);
 		const int priority = thread_get_priority_of(candidate);
+		const bool is_donated = (priority > candidate->priority);
 		if (result == NULL ||
-		    /* Thread with highest computed priority wins. */
+		    /* Choose the highest priority value, preferring the
+		       earliest occurrence of each given value, which implicitly
+		       leads to round-robin effects. */
 		    priority > max_priority ||
-		    /* If two threads have matching priorities, tiebreak by
-		       choosing thread with greater tid_t, as a heuristic for
-		       preferring child threads over parent threads. */
-		    // TODO: round-robin across ties for highest priority
-		    // lack of round robin caught by testcase: priority-fifo
-		    (priority == max_priority &&
-		     candidate->tid > result->tid)) {
+		    /* If two threads tie on priority, prefer inline priority
+		       over donated priority of the same scalar value. */
+		    (priority == max_priority && max_donated && !is_donated)) {
 			max_priority = priority;
+			max_donated = is_donated;
 			result = candidate;
 		}
 	}
