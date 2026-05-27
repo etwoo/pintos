@@ -72,16 +72,6 @@ static void schedule(void);
 void thread_schedule_tail(struct thread *prev);
 static tid_t allocate_tid(void);
 
-bool
-priority_less(const struct list_elem *a_,
-              const struct list_elem *b_,
-              void *aux UNUSED)
-{
-	const struct thread *a = list_entry(a_, struct thread, elem);
-	const struct thread *b = list_entry(b_, struct thread, elem);
-	return a->priority < b->priority;
-}
-
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
    general and it is possible in this case only because loader.S
@@ -219,12 +209,6 @@ thread_create(const char *name, int priority, thread_func *function, void *aux)
 	return tid;
 }
 
-static void
-sort_ready_list(void)
-{
-	list_sort(&ready_list, priority_less, NULL);
-}
-
 /* Puts the current thread to sleep.  It will not be scheduled
    again until awoken by thread_unblock().
 
@@ -237,16 +221,8 @@ thread_block(void)
 	ASSERT(!intr_context());
 	ASSERT(intr_get_level() == INTR_OFF);
 
-	sort_ready_list();
 	thread_current()->status = THREAD_BLOCKED;
 	schedule();
-}
-
-static void
-enqueue_ready_list(struct list_elem *e)
-{
-	sort_ready_list();
-	list_insert_ordered(&ready_list, e, priority_less, NULL);
 }
 
 /* Transitions a blocked thread T to the ready-to-run state.
@@ -266,7 +242,7 @@ thread_unblock(struct thread *t)
 
 	old_level = intr_disable();
 	ASSERT(t->status == THREAD_BLOCKED);
-	enqueue_ready_list(&t->elem);
+	list_push_back(&ready_list, &t->elem);
 	t->status = THREAD_READY;
 	intr_set_level(old_level);
 }
@@ -337,7 +313,7 @@ thread_yield(void)
 
 	old_level = intr_disable();
 	if (cur != idle_thread)
-		enqueue_ready_list(&cur->elem);
+		list_push_back(&ready_list, &cur->elem);
 	cur->status = THREAD_READY;
 	schedule();
 	intr_set_level(old_level);
@@ -360,22 +336,39 @@ thread_foreach(thread_action_func *func, void *aux)
 }
 
 /* Sets the current thread's priority to NEW_PRIORITY.
-   If the current thread no longer has the highest priority, yields. (TODO) */
+   If the current thread no longer has the highest priority, yields. */
 void
 thread_set_priority(int new_priority)
 {
 	ASSERT(!thread_mlfqs);
 	thread_current()->priority = new_priority;
-	thread_yield(); // TODO: skip when possible?
+	thread_yield(); // TODO: fastpath if current thread retains highest pri?
+}
+
+int
+thread_get_priority_of(struct thread *t)
+{
+	ASSERT(!thread_mlfqs);
+	int result = t->priority;
+
+	const struct thread *root = t;
+	do {
+		t = t->donation;
+		if (t->priority > result) {
+			result = t->priority;
+		}
+	} while (t != NULL && t != root);
+
+	return result;
 }
 
 /* Returns the current thread's priority.
-   In the presence of donation, returns the higher (donated) priority. (TODO) */
+   In the presence of donation, returns the higher (donated) priority. */
 int
 thread_get_priority(void)
 {
 	ASSERT(!thread_mlfqs);
-	return thread_current()->priority;
+	return thread_get_priority_of(thread_current());
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -529,6 +522,7 @@ init_thread(struct thread *t, const char *name, int priority)
 	strlcpy(t->name, name, sizeof t->name);
 	t->stack = (uint8_t *)t + PGSIZE;
 	t->priority = priority;
+	ASSERT(t->donation == NULL);
 	t->magic = THREAD_MAGIC;
 
 	old_level = intr_disable();
@@ -561,9 +555,7 @@ next_thread_to_run(void)
 	if (list_empty(&ready_list))
 		return idle_thread;
 	else
-		return list_entry(list_pop_back(&ready_list),
-		                  struct thread,
-		                  elem);
+		return get_highest_priority(&ready_list, HIPRI_POP);
 }
 
 /* Completes a thread switch by activating the new thread's page
@@ -652,3 +644,36 @@ allocate_tid(void)
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof(struct thread, stack);
+
+struct thread *
+get_highest_priority(struct list *threads, enum get_mode mode)
+{
+	ASSERT(!list_empty(threads));
+
+	int max = PRI_MIN;
+	struct list_elem *max_elem = NULL;
+	struct thread *result = NULL;
+
+	struct list_elem *e = list_begin(threads);
+	for (; e != list_end(threads); e = list_next(e)) {
+		struct thread *candidate = list_entry(e, struct thread, elem);
+		const int priority = thread_get_priority_of(candidate);
+		if (result == NULL || priority > max) {
+			max = priority;
+			max_elem = e;
+			result = candidate;
+		}
+	}
+
+	ASSERT(max_elem != NULL);
+	switch (mode) {
+	case HIPRI_PEEK:
+		break;
+	case HIPRI_POP:
+		list_remove(max_elem);
+		break;
+	}
+
+	ASSERT(result != NULL);
+	return result;
+}

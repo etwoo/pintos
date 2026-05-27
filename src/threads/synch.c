@@ -52,6 +52,13 @@ sema_init(struct semaphore *sema, unsigned value)
 	list_init(&sema->waiters);
 }
 
+static struct thread *
+get_best_waiter(struct semaphore *sema, enum get_mode mode)
+{
+	ASSERT(!list_empty(&sema->waiters));
+	return get_highest_priority(&sema->waiters, mode);
+}
+
 static void
 donate_priority(struct lock *lock)
 {
@@ -64,15 +71,14 @@ donate_priority(struct lock *lock)
 	struct thread *holder = lock->holder;
 	ASSERT(is_thread(holder));
 
-	struct list_elem *back = list_back(&lock->semaphore.waiters);
-	struct thread *waiter = list_entry(back, struct thread, elem);
+	struct thread *waiter = get_best_waiter(&lock->semaphore, HIPRI_PEEK);
 	ASSERT(is_thread(waiter));
-	ASSERT(waiter->status == THREAD_RUNNING); /* prior to THREAD_BLOCKED */
+	ASSERT(waiter->status == THREAD_RUNNING || /* prior to thread_block() */
+	       waiter->status == THREAD_BLOCKED);  /* ... or already blocked  */
 
-	if (waiter->priority > holder->priority) {
+	if (thread_get_priority_of(waiter) > thread_get_priority_of(holder)) {
 		/* Make donation from highest priority waiter to lock holder. */
-		lock->priority_checkpoint = holder->priority;
-		holder->priority = waiter->priority;
+		holder->donation = waiter;
 	}
 }
 
@@ -93,10 +99,7 @@ sema_down_impl(struct semaphore *sema, struct lock *parent)
 
 	old_level = intr_disable();
 	while (sema->value == 0) {
-		list_insert_ordered(&sema->waiters,
-		                    &thread_current()->elem,
-		                    priority_less,
-		                    NULL);
+		list_push_back(&sema->waiters, &thread_current()->elem);
 		donate_priority(parent);
 		thread_block();
 	}
@@ -147,9 +150,7 @@ sema_up(struct semaphore *sema)
 
 	old_level = intr_disable();
 	if (!list_empty(&sema->waiters))
-		thread_unblock(list_entry(list_pop_back(&sema->waiters),
-		                          struct thread,
-		                          elem));
+		thread_unblock(get_best_waiter(sema, HIPRI_POP));
 	sema->value++;
 	intr_set_level(old_level);
 }
@@ -211,7 +212,6 @@ lock_init(struct lock *lock)
 
 	lock->holder = NULL;
 	sema_init(&lock->semaphore, 1);
-	lock->priority_checkpoint = PRI_INVALID;
 }
 
 /* Acquires LOCK, sleeping until it becomes available if
@@ -265,17 +265,21 @@ lock_release(struct lock *lock)
 	ASSERT(lock != NULL);
 	ASSERT(lock_held_by_current_thread(lock));
 
-	if (lock->priority_checkpoint != PRI_INVALID) {
-		/* Recall donation from lock holder upon release. */
-		ASSERT(lock->holder->priority > lock->priority_checkpoint);
-		lock->holder->priority = lock->priority_checkpoint;
-		lock->priority_checkpoint = PRI_INVALID;
+	const bool recall_donation = (lock->holder->donation != NULL);
+	if (recall_donation) {
+		ASSERT(is_thread(lock->holder->donation));
+		ASSERT(lock->holder->priority <
+		       lock->holder->donation->priority);
+		lock->holder->donation = NULL;
 	}
+
 	lock->holder = NULL;
 	sema_up(&lock->semaphore);
 
-	/* Yield, in case releasing lock above recalled a priority donation. */
-	thread_yield(); // TODO: try removing?
+	/* Yield, in case recalled donation above leads to new hipri thread. */
+	if (recall_donation) {
+		thread_yield(); // TODO: try removing?
+	}
 }
 
 /* Returns true if the current thread holds LOCK, false
