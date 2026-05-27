@@ -384,7 +384,7 @@ thread_get_priority(void)
 
 /* Sets the current thread's nice value to NICE. */
 void
-thread_set_nice(int nice UNUSED)
+thread_set_nice(int nice) // TODO: advanced_scheduler
 {
 	ASSERT(thread_mlfqs);
 	ASSERT(nice >= -20 && nice <= 20);
@@ -420,8 +420,6 @@ thread_set_nice(int nice UNUSED)
 	   any other time. */
 
 	/* If the running thread no longer has the highest priority, yields. */
-
-	// TODO
 }
 
 /* Returns the current thread's nice value. */
@@ -429,7 +427,7 @@ int
 thread_get_nice(void)
 {
 	ASSERT(thread_mlfqs);
-	return 0; // TODO
+	return 0; // TODO: advanced_scheduler
 }
 
 /* Returns 100 times the system load average. */
@@ -437,7 +435,7 @@ int
 thread_get_load_avg(void)
 {
 	ASSERT(thread_mlfqs);
-	return 0; // TODO
+	return 0; // TODO: advanced_scheduler
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
@@ -445,7 +443,7 @@ int
 thread_get_recent_cpu(void)
 {
 	ASSERT(thread_mlfqs);
-	return 0; // TODO
+	return 0; // TODO: advanced_scheduler
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
