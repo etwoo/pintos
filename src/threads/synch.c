@@ -160,6 +160,11 @@ sema_up(struct semaphore *sema)
 		thread_unblock(get_best_waiter(sema, HIPRI_POP));
 	sema->value++;
 	intr_set_level(old_level);
+
+	if (old_level == INTR_ON) {
+		/* Yield, in case newly unblocked thread takes priority. */
+		thread_yield();
+	}
 }
 
 static void sema_test_helper(void *sema_);
