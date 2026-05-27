@@ -1,5 +1,6 @@
 #include "threads/thread.h"
 
+#include "devices/timer.h"
 #include "threads/flags.h"
 #include "threads/interrupt.h"
 #include "threads/intr-stubs.h"
@@ -10,6 +11,7 @@
 
 #include <array.h>
 #include <debug.h>
+#include <limits.h>
 #include <random.h>
 #include <stddef.h>
 #include <stdio.h>
