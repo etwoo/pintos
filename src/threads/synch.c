@@ -117,7 +117,9 @@ sema_down(struct semaphore *sema)
    semaphore is not already 0.  Returns true if the semaphore is
    decremented, false otherwise.
 
-   This function may be called from an interrupt handler. */
+   This function may be called from an interrupt handler.
+
+   Unlike sema_down(), this function does not implement priority donation. */
 bool
 sema_try_down(struct semaphore *sema)
 {
@@ -244,7 +246,9 @@ lock_acquire(struct lock *lock)
    thread.
 
    This function will not sleep, so it may be called within an
-   interrupt handler. */
+   interrupt handler.
+
+   Unlike lock_acquire(), this function does not implement priority donation. */
 bool
 lock_try_acquire(struct lock *lock)
 {
@@ -253,7 +257,6 @@ lock_try_acquire(struct lock *lock)
 	ASSERT(lock != NULL);
 	ASSERT(!lock_held_by_current_thread(lock));
 
-	// TODO: priority donation, like lock_acquire()
 	success = sema_try_down(&lock->semaphore);
 	if (success)
 		lock->holder = thread_current();
