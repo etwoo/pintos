@@ -282,9 +282,6 @@ lock_release(struct lock *lock)
 
 	lock->holder = NULL;
 	sema_up(&lock->semaphore);
-
-	/* Yield, in case recalled donation above leads to new hipri thread. */
-	thread_yield(); // TODO: try removing?
 }
 
 /* Returns true if the current thread holds LOCK, false
