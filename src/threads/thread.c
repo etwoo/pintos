@@ -144,13 +144,22 @@ thread_tick(void)
 	else
 		kernel_ticks++;
 
-	const int system_ticks = idle_ticks + user_ticks + kernel_ticks;
-	const bool once_per_second = (system_ticks % TIMER_FREQ == 0);
+	// TODO: why does kernel_ticks seem 4x higher per second under bochs,
+	// compared to qemu and bochs with realistic timings? in other words,
+	// bochs (unless --realtime passed) causes mlfqs-load-60.c invocation
+	// of timer_sleep() on 2s interval to wait for 800 ticks, instead of
+	// expected 200 ticks; maybe: is TIME_SLICE==4 a coincidence?
+
+	// TODO: use timer_ticks() directly instead?
+	static int current_window = -1; /* magic offset from timer_ticks() */
+	const bool once_per_second = (current_window % TIMER_FREQ == 0);
 	if (thread_mlfqs && once_per_second) {
+		current_window = 0;
 		// TODO: can some of this work be moved out of timer_interrupt?
 		thread_update_load_avg();
 		thread_update_recent_cpu();
 	}
+	current_window++;
 
 	/* Enforce preemption. */
 	if (++thread_ticks >= TIME_SLICE)
