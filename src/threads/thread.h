@@ -92,7 +92,7 @@ struct thread {
 	char name[16];             /* Name (for debugging purposes). */
 	uint8_t *stack;            /* Saved stack pointer. */
 	int priority;              /* Priority. */
-	struct thread *donate[8];  /* Priority donation. (TODO: weakref) */
+	struct thread *donate[8];  /* Priority donation. */
 	int nice;                  /* thread_mlfqs: niceness. */
 	struct fix_t recent_cpu;   /* thread_mlfqs: recent_cpu. */
 	struct list_elem allelem;  /* List element for all threads list. */

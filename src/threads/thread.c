@@ -299,6 +299,17 @@ thread_tid(void)
 	return thread_current()->tid;
 }
 
+static void
+recall_donation_from_dying_thread(struct thread *t, void *aux)
+{
+	struct thread *dying = aux;
+	for (size_t i = 0; i < ARRAY_SIZE(t->donate); ++i) {
+		if (t->donate[i] == dying) {
+			t->donate[i] = NULL;
+		}
+	}
+}
+
 /* Deschedules the current thread and destroys it.  Never
    returns to the caller. */
 void
@@ -314,8 +325,10 @@ thread_exit(void)
 	   and schedule another process.  That process will destroy us
 	   when it calls thread_schedule_tail(). */
 	intr_disable();
-	list_remove(&thread_current()->allelem);
-	thread_current()->status = THREAD_DYING;
+	struct thread *dying = thread_current();
+	list_remove(&dying->allelem);
+	thread_foreach(recall_donation_from_dying_thread, dying);
+	dying->status = THREAD_DYING;
 	schedule();
 	NOT_REACHED();
 }
@@ -375,13 +388,9 @@ thread_get_priority_of(struct thread *t)
 		result = thread_get_priority_of_mlfqs(t);
 	} else {
 		result = t->priority;
-		// TODO: lock donation pointers? or disable interrupts?
 		for (size_t i = 0; i < ARRAY_SIZE(t->donate); ++i) {
 			struct thread *candidate = t->donate[i];
 			if (candidate == NULL) {
-				continue;
-			}
-			if (!is_thread(candidate)) { // TODO: weakref?
 				continue;
 			}
 			const int donated = thread_get_priority_of(candidate);
