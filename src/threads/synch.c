@@ -54,7 +54,7 @@ sema_init(struct semaphore *sema, unsigned value)
 }
 
 static void
-donate_priority(struct thread *waiter, struct lock *lock)
+thread_donate_priority(struct thread *waiter, struct lock *lock)
 {
 	ASSERT(intr_context() == INTR_OFF);
 
@@ -100,7 +100,7 @@ sema_down_impl(struct semaphore *sema, struct lock *parent)
 	while (sema->value == 0) {
 		struct thread *to_sleep = thread_current();
 		list_push_back(&sema->waiters, &to_sleep->elem);
-		donate_priority(to_sleep, parent);
+		thread_donate_priority(to_sleep, parent);
 		thread_block();
 	}
 	sema->value--;
