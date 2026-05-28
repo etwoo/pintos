@@ -700,6 +700,26 @@ thread_pop_by_priority(struct list *threads)
 }
 
 static void
+is_thread_ready(struct thread *t, void *aux)
+{
+	int32_t *ready_threads = aux;
+
+	if (t == idle_thread) {
+		return;
+	}
+
+	switch (t->status) {
+	case THREAD_RUNNING:
+	case THREAD_READY:
+		(*ready_threads)++;
+		break;
+	case THREAD_BLOCKED:
+	case THREAD_DYING:
+		break;
+	}
+}
+
+static void
 thread_update_load_avg(void)
 {
 	ASSERT(thread_mlfqs);
@@ -707,23 +727,7 @@ thread_update_load_avg(void)
 	ASSERT(intr_get_level() == INTR_OFF);
 
 	int32_t ready_threads = 0;
-
-	struct list_elem *e = list_begin(&all_list);
-	for (; e != list_end(&all_list); e = list_next(e)) {
-		struct thread *t = list_entry(e, struct thread, allelem);
-		if (t == idle_thread) {
-			continue;
-		}
-		switch (t->status) {
-		case THREAD_RUNNING:
-		case THREAD_READY:
-			++ready_threads;
-			break;
-		case THREAD_BLOCKED:
-		case THREAD_DYING:
-			break;
-		}
-	}
+	thread_foreach(is_thread_ready, &ready_threads);
 
 	/* load_avg = (59/60)*load_avg + (1/60)*ready_threads */
 	const struct fix_t load_avg_term =
@@ -736,28 +740,26 @@ thread_update_load_avg(void)
 }
 
 static void
+update_recent_cpu(struct thread *t, void *aux)
+{
+	/* recent_cpu = ((2*load_avg) / (2*load_avg + 1)) * recent_cpu + nice */
+	const struct fix_t coefficient = *((struct fix_t *)aux);
+	const struct fix_t base = mul_fixed_fixed(coefficient, t->recent_cpu);
+	t->recent_cpu = add_fixed_i32(base, t->nice);
+}
+
+static void
 thread_update_recent_cpu(void)
 {
 	ASSERT(thread_mlfqs);
 	ASSERT(intr_context());
 	ASSERT(intr_get_level() == INTR_OFF);
 
-	struct list_elem *e = list_begin(&all_list);
-	for (; e != list_end(&all_list); e = list_next(e)) {
-		struct thread *t = list_entry(e, struct thread, allelem);
-		/*
-		   recent_cpu =
-		   ((2 * load_avg) / (2 * load_avg + 1)) * recent_cpu + nice
-		 */
-		const struct fix_t load_avg_2x =
-			mul_fixed_i32(system_load_avg, 2);
-		const struct fix_t coefficient =
-			div_fixed_fixed(load_avg_2x,
-		                        add_fixed_i32(load_avg_2x, 1));
-		const struct fix_t base_term =
-			mul_fixed_fixed(coefficient, t->recent_cpu);
-		t->recent_cpu = add_fixed_i32(base_term, t->nice);
-	}
+	const struct fix_t load_avg_2x = mul_fixed_i32(system_load_avg, 2);
+	const struct fix_t coefficient =
+		div_fixed_fixed(load_avg_2x, add_fixed_i32(load_avg_2x, 1));
+
+	thread_foreach(update_recent_cpu, &coefficient);
 }
 
 static int
