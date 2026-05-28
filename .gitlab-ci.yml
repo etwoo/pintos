@@ -10,7 +10,9 @@ build:gcc:
     - apt-get install -qqy build-essential binutils-i686-linux-gnu gcc-i686-linux-gnu bochs
   script:
     - export PATH="$PWD/src/utils:$PATH"
-    - make check -C src/threads
+    - make -C src/threads
+    - cd src/threads/build
+    - pintos -v -k -T 60 --bochs  -- -q  run alarm-single
 
 lint:clang-format:
   stage: build
