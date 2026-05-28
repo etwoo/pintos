@@ -539,9 +539,7 @@ init_thread(struct thread *t, const char *name, int priority)
 	for (size_t i = 0; i < ARRAY_SIZE(t->donate); ++i) {
 		ASSERT(t->donate[i] == NULL);
 	}
-	// TODO: how to inherit nice from parent thread?
 	t->nice = NICE_DEFAULT;
-	// TODO: how to inherit seed recent_cpu from parent thread?
 	t->recent_cpu = i32_to_fixed(0);
 	t->magic = THREAD_MAGIC;
 
