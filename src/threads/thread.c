@@ -130,7 +130,7 @@ thread_start(void)
 /* Called by the timer interrupt handler at each timer tick.
    Thus, this function runs in an external interrupt context. */
 void
-thread_tick(void)
+thread_tick(int timer_ticks_snapshot)
 {
 	struct thread *t = thread_current();
 
@@ -148,13 +148,7 @@ thread_tick(void)
 		t->recent_cpu = add_fixed_i32(t->recent_cpu, 1);
 	}
 
-	// TODO: why does kernel_ticks seem 4x higher per second under bochs,
-	// compared to qemu and bochs with realistic timings? in other words,
-	// bochs (unless --realtime passed) causes mlfqs-load-60.c invocation
-	// of timer_sleep() on 2s interval to wait for 800 ticks, instead of
-	// expected 200 ticks; maybe: is TIME_SLICE==4 a coincidence?
-
-	const bool once_per_second = (timer_ticks() % TIMER_FREQ == 0);
+	const bool once_per_second = (timer_ticks_snapshot % TIMER_FREQ == 0);
 	if (thread_mlfqs && once_per_second) {
 		// TODO: can some of this work be moved out of timer_interrupt?
 		thread_update_load_avg();

@@ -226,7 +226,7 @@ timer_interrupt(struct intr_frame *args UNUSED)
 		sema_up(&s->sleep_completion);
 	}
 
-	thread_tick();
+	thread_tick(ticks);
 }
 
 /* Returns true if LOOPS iterations waits for more than one timer
