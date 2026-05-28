@@ -752,7 +752,6 @@ thread_update_recent_cpu(void)
 		                        add_fixed_i32(load_avg_2x, 1));
 		const struct fix_t base_term =
 			mul_fixed_fixed(coefficient, t->recent_cpu);
-		// TODO: avoid overflow on coefficient * recent_cpu (above)?
 		t->recent_cpu = add_fixed_i32(base_term, t->nice);
 	}
 }
