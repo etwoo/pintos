@@ -434,9 +434,14 @@ to_int_100x(struct fix_t x)
 int
 thread_get_load_avg(void)
 {
-	// TODO: disable interrupts to synchronize access to system_load_avg?
 	ASSERT(thread_mlfqs);
-	return to_int_100x(system_load_avg);
+	struct fix_t copy = {0};
+	{
+		enum intr_level old_level = intr_disable();
+		copy = system_load_avg;
+		intr_set_level(old_level);
+	}
+	return to_int_100x(copy);
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
