@@ -12,7 +12,7 @@ build:gcc:
     - export PATH="$PWD/src/utils:$PATH"
     - make -C src/threads
     - cd src/threads/build
-    - pintos -v -k -T 60 --bochs  -- -q  run alarm-single
+    - pintos -k -T 60 --bochs  -- -q  run alarm-single
 
 lint:clang-format:
   stage: build
