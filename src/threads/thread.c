@@ -725,6 +725,16 @@ thread_update_load_avg(void)
 		}
 	}
 
+	switch (initial_thread->status) {
+		case THREAD_RUNNING:
+		case THREAD_READY:
+			++ready_threads;
+			break;
+		case THREAD_BLOCKED:
+		case THREAD_DYING:
+			break;
+	}
+
 	/* load_avg = (59/60)*load_avg + (1/60)*ready_threads */
 	const struct fix_t load_avg_term =
 		mul_fixed_fixed(div_fixed_i32(i32_to_fixed(59), 60),
