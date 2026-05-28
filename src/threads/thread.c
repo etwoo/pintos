@@ -441,6 +441,7 @@ to_int_100x(struct fix_t x)
 int
 thread_get_load_avg(void)
 {
+	// TODO: disable interrupts to synchronize access to system_load_avg?
 	ASSERT(thread_mlfqs);
 	return to_int_100x(system_load_avg);
 }
@@ -711,9 +712,12 @@ thread_update_load_avg(void)
 
 	int32_t ready_threads = 0;
 
-	struct list_elem *e = list_begin(&ready_list);
-	for (; e != list_end(&ready_list); e = list_next(e)) {
-		struct thread *t = list_entry(e, struct thread, elem);
+	struct list_elem *e = list_begin(&all_list);
+	for (; e != list_end(&all_list); e = list_next(e)) {
+		struct thread *t = list_entry(e, struct thread, allelem);
+		if (t == idle_thread) {
+			continue;
+		}
 		switch (t->status) {
 		case THREAD_RUNNING:
 		case THREAD_READY:
@@ -723,16 +727,6 @@ thread_update_load_avg(void)
 		case THREAD_DYING:
 			break;
 		}
-	}
-
-	switch (initial_thread->status) {
-		case THREAD_RUNNING:
-		case THREAD_READY:
-			++ready_threads;
-			break;
-		case THREAD_BLOCKED:
-		case THREAD_DYING:
-			break;
 	}
 
 	/* load_avg = (59/60)*load_avg + (1/60)*ready_threads */
@@ -752,9 +746,9 @@ thread_update_recent_cpu(void)
 	ASSERT(intr_context());
 	ASSERT(intr_get_level() == INTR_OFF);
 
-	struct list_elem *e = list_begin(&ready_list);
-	for (; e != list_end(&ready_list); e = list_next(e)) {
-		struct thread *t = list_entry(e, struct thread, elem);
+	struct list_elem *e = list_begin(&all_list);
+	for (; e != list_end(&all_list); e = list_next(e)) {
+		struct thread *t = list_entry(e, struct thread, allelem);
 		/*
 		   recent_cpu =
 		   ((2 * load_avg) / (2 * load_avg + 1)) * recent_cpu + nice
