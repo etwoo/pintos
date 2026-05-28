@@ -327,7 +327,9 @@ thread_exit(void)
 	intr_disable();
 	struct thread *dying = thread_current();
 	list_remove(&dying->allelem);
-	thread_foreach(recall_donation_from_dying_thread, dying);
+	if (!thread_mlfqs) {
+		thread_foreach(recall_donation_from_dying_thread, dying);
+	}
 	dying->status = THREAD_DYING;
 	schedule();
 	NOT_REACHED();
