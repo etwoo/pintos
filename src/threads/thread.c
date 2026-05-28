@@ -522,7 +522,9 @@ init_thread(struct thread *t, const char *name, int priority)
 
 	ASSERT(t != NULL);
 	ASSERT(PRI_MIN <= priority && priority <= PRI_MAX);
-	ASSERT(!thread_mlfqs || priority == PRI_DEFAULT);
+	ASSERT(!thread_mlfqs ||
+	       priority == PRI_DEFAULT || /* thread_mlfqs: most threads */
+	       t->priority == PRI_MIN);   /* thread_mlfqs: idle_thread */
 	ASSERT(name != NULL);
 
 	memset(t, 0, sizeof *t);
@@ -698,12 +700,26 @@ thread_update_load_avg(void)
 	ASSERT(intr_context());
 	ASSERT(intr_get_level() == INTR_OFF);
 
+	int32_t ready_threads = 0;
+
+	struct list_elem *e = list_begin(&ready_list);
+	for (; e != list_end(&ready_list); e = list_next(e)) {
+		struct thread *t = list_entry(e, struct thread, elem);
+		switch (t->status) {
+		case THREAD_RUNNING:
+		case THREAD_READY:
+			++ready_threads;
+			break;
+		case THREAD_BLOCKED:
+		case THREAD_DYING:
+			break;
+		}
+	}
+
 	/* load_avg = (59/60)*load_avg + (1/60)*ready_threads */
 	const struct fix_t load_avg_term =
 		mul_fixed_fixed(div_fixed_i32(i32_to_fixed(59), 60),
 	                        system_load_avg);
-	const size_t ready_threads = list_size(&ready_list);
-	ASSERT(ready_threads <= INT32_MAX); /* safe to cast size_t to int32_t */
 	const struct fix_t ready_term =
 		mul_fixed_i32(div_fixed_i32(i32_to_fixed(1), 60),
 	                      ready_threads);
@@ -719,7 +735,7 @@ thread_update_recent_cpu(void)
 
 	struct list_elem *e = list_begin(&ready_list);
 	for (; e != list_end(&ready_list); e = list_next(e)) {
-		struct thread *t = list_entry(e, struct thread, allelem);
+		struct thread *t = list_entry(e, struct thread, elem);
 		/*
 		   recent_cpu =
 		   ((2 * load_avg) / (2 * load_avg + 1)) * recent_cpu + nice
@@ -741,7 +757,7 @@ thread_get_priority_of_mlfqs(struct thread *t)
 {
 	ASSERT(thread_mlfqs);
 	ASSERT(is_thread(t));
-	ASSERT(t->priority == PRI_DEFAULT);
+	ASSERT(t->priority == PRI_DEFAULT || t->priority == PRI_MIN);
 
 	/* priority = PRI_MAX - (recent_cpu / 4) - (nice * 2) */
 	const int32_t recent_cpu_term =
