@@ -150,7 +150,6 @@ thread_tick(int timer_ticks_snapshot)
 
 	const bool once_per_second = (timer_ticks_snapshot % TIMER_FREQ == 0);
 	if (thread_mlfqs && once_per_second) {
-		// TODO: can some of this work be moved out of timer_interrupt?
 		thread_update_load_avg();
 		thread_update_recent_cpu();
 	}
