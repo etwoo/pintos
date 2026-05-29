@@ -90,7 +90,7 @@ start_process(void *file_name_)
 int
 process_wait(tid_t child_tid UNUSED)
 {
-	return -1;
+	return -1; // TODO: process_wait()
 }
 
 /* Free the current process's resources. */

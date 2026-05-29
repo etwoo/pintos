@@ -284,7 +284,8 @@ run_task(char **argv)
 
 	printf("Executing '%s':\n", task);
 #ifdef USERPROG
-	process_wait(process_execute(task));
+	const int code = process_wait(process_execute(task));
+	printf("%s: exit(%d)\n", task, code);
 #else
 	run_test(task);
 #endif
