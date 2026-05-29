@@ -72,12 +72,11 @@ start_process(void *file_name_)
 	void *kpage = NULL;
 	bool success = true;
 	int argc = 0;
-	char *token = NULL;
 	char *save_ptr = NULL;
 
 #define KPAGE_TO_ESP(cur, end) (PHYS_BASE - (end - cur))
 
-	for (token = strtok_r(file_name, " ", &save_ptr);
+	for (char *token = strtok_r(file_name, " ", &save_ptr);
 	     success && (token != NULL) && ((size_t)argc < ARRAY_SIZE(argv));
 	     token = strtok_r(NULL, " ", &save_ptr), ++argc) {
 		if (kpage == NULL) {
