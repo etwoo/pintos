@@ -22,7 +22,7 @@
 #include <string.h>
 
 static thread_func start_process NO_RETURN;
-static bool load(const char *cmdline, void (**eip)(void), void **esp);
+static bool load(const char *, void (**)(void), void **, void **);
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -67,7 +67,7 @@ start_process(void *file_name_)
 		argv[i] = NULL;
 	}
 
-	bool first_load = false;
+	void *kpage = NULL;
 	bool success = true;
 	int argc = 0;
 	char *token = NULL;
@@ -76,13 +76,13 @@ start_process(void *file_name_)
 	for (token = strtok_r(file_name, " ", &save_ptr);
 	     success && (token != NULL) && ((size_t)argc < ARRAY_SIZE(argv));
 	     token = strtok_r(NULL, " ", &save_ptr), ++argc) {
-		if (!first_load) {
-			first_load = true;
+		if (kpage == NULL) {
 			/* load() executable, including setup_stack() */
-			success = load(token, &if_.eip, &if_.esp);
+			success = load(token, &if_.eip, &if_.esp, &kpage);
 			if (!success) {
 				break;
 			}
+			ASSERT(kpage != NULL);
 		}
 
 		ASSERT(PHYS_BASE >= if_.esp);
@@ -94,44 +94,44 @@ start_process(void *file_name_)
 			break;
 		}
 
-		strlcpy(token, if_.esp, len);
-		argv[argc] = if_.esp;
-		if_.esp -= len;
-		if_.esp -= 1; /* Seek past null terminator. */
+		strlcpy(token, kpage, len);
+		argv[argc] = kpage;
+		kpage -= len;
+		kpage -= 1; /* Seek past null terminator. */
 	}
 
-	if ((uintptr_t)if_.esp % 4 != 0) {
+	if ((uintptr_t)kpage % 4 != 0) {
 		/* Word-aligned accesses perform better than unaligned accesses.
 		   Round the stack pointer down to a multiple of 4. */
-		if_.esp = (void *)(((uintptr_t)if_.esp / 4) * 4);
+		kpage = (void *)(((uintptr_t)kpage / 4) * 4);
 	}
 
 	for (int i = 0; i <= argc; ++i) {
 		const int pos = argc - i; /* push args right to left */
 		if (pos == argc) {
-			memset(if_.esp, 0, sizeof(char *));
+			memset(kpage, 0, sizeof(char *));
 		} else {
-			memcpy(if_.esp, argv + pos, sizeof(char *));
+			memcpy(kpage, argv + pos, sizeof(char *));
 			ASSERT(sizeof(char *) == sizeof(argv[pos]));
 		}
-		if_.esp -= sizeof(char *);
+		kpage -= sizeof(char *);
 	}
 
-	memcpy(if_.esp, &argv, sizeof(char **));
+	memcpy(kpage, &argv, sizeof(char **));
 	ASSERT(sizeof(char **) == sizeof(&argv));
-	if_.esp -= sizeof(&argv);
+	kpage -= sizeof(&argv);
 
-	memcpy(if_.esp, &argc, sizeof(int));
+	memcpy(kpage, &argc, sizeof(int));
 	ASSERT(sizeof(int) == sizeof(argc));
-	if_.esp -= sizeof(argc);
+	kpage -= sizeof(argc);
 
 	/* Push a fake "return address". Although the entry function will never
 	 * return, its stack frame must have the same structure as any other. */
-	memset(if_.esp, 0, sizeof(void (*)()));
+	memset(kpage, 0, sizeof(void (*)()));
 
 	/* TODO: rm hex_dump() */
 	const uintptr_t end = (uintptr_t)if_.esp - 4;
-	hex_dump(end, if_.esp, PHYS_BASE - if_.esp, true);
+	hex_dump(end, kpage, PHYS_BASE - if_.esp, true);
 
 	/* If load failed, quit. */
 	palloc_free_page(file_name);
@@ -266,7 +266,7 @@ struct Elf32_Phdr {
 #define PF_W 2 /* Writable. */
 #define PF_R 4 /* Readable. */
 
-static bool setup_stack(void **esp);
+static bool setup_stack(void **esp, void **kpage);
 static bool validate_segment(const struct Elf32_Phdr *, struct file *);
 static bool load_segment(struct file *file,
                          off_t ofs,
@@ -280,7 +280,7 @@ static bool load_segment(struct file *file,
    and its initial stack pointer into *ESP.
    Returns true if successful, false otherwise. */
 bool
-load(const char *file_name, void (**eip)(void), void **esp)
+load(const char *file_name, void (**eip)(void), void **esp, void **kpage)
 {
 	struct thread *t = thread_current();
 	struct Elf32_Ehdr ehdr;
@@ -376,7 +376,7 @@ load(const char *file_name, void (**eip)(void), void **esp)
 	}
 
 	/* Set up stack. */
-	if (!setup_stack(esp))
+	if (!setup_stack(esp, kpage))
 		goto done;
 
 	/* Start address. */
@@ -504,20 +504,20 @@ load_segment(struct file *file,
 /* Create a minimal stack by mapping a zeroed page at the top of
    user virtual memory. */
 static bool
-setup_stack(void **esp)
+setup_stack(void **esp, void **kpage)
 {
-	uint8_t *kpage;
 	bool success = false;
 
-	kpage = palloc_get_page(PAL_USER | PAL_ZERO);
-	if (kpage != NULL) {
+	ASSERT(kpage != NULL && *kpage == NULL);
+	*kpage = palloc_get_page(PAL_USER | PAL_ZERO);
+	if (*kpage != NULL) {
 		success = install_page(((uint8_t *)PHYS_BASE) - PGSIZE,
-		                       kpage,
+		                       *kpage,
 		                       true);
 		if (success)
 			*esp = PHYS_BASE - 4; /* 0xbffffffc */ // TODO ok?
 		else
-			palloc_free_page(kpage);
+			palloc_free_page(*kpage);
 	}
 	return success;
 }
