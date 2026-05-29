@@ -22,7 +22,7 @@
 #include <string.h>
 
 static thread_func start_process NO_RETURN;
-static bool load(const char *, void (**)(void), void **, void **);
+static bool prepare_executable_and_arguments(char *, struct intr_frame *);
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -53,8 +53,6 @@ process_execute(const char *file_name)
 static void
 start_process(void *file_name_)
 {
-	bool success = false;
-
 	char *file_name = file_name_;
 	ASSERT(strlen(file_name) <= PGSIZE);
 
@@ -65,87 +63,8 @@ start_process(void *file_name_)
 	if_.cs = SEL_UCSEG;
 	if_.eflags = FLAG_IF | FLAG_MBS;
 
-	char *argv[32]; /* Handle ARG_MAX of 32. */
-	for (size_t i = 0; i < ARRAY_SIZE(argv); ++i) {
-		argv[i] = NULL;
-	}
+	const bool success = prepare_executable_and_arguments(file_name, &if_);
 
-	void *kpage_begin = NULL;
-	void *kpage_end = NULL;
-	void *kpage = NULL;
-	int argc = 0;
-	char *save_ptr = NULL;
-
-#define KPAGE_TO_ESP(cur, end) (PHYS_BASE - (end - cur))
-
-	for (char *token = strtok_r(file_name, " ", &save_ptr);
-	     (token != NULL) && ((size_t)argc < ARRAY_SIZE(argv));
-	     token = strtok_r(NULL, " ", &save_ptr), ++argc) {
-		if (kpage == NULL) {
-			/* load() executable, including setup_stack() */
-			if (!load(token, &if_.eip, &if_.esp, &kpage)) {
-				goto done;
-			}
-			ASSERT(kpage != NULL);
-			kpage_begin = kpage;
-			/* Seek to last word of page. */
-			kpage += (PGSIZE - sizeof(int));
-			kpage_end = kpage;
-		}
-
-		const size_t size = strlen(token) + 1; /* Count ending NUL. */
-		kpage -= size;
-		memcpy(kpage, token, size);
-		argv[argc] = KPAGE_TO_ESP(kpage, kpage_end);
-	}
-
-	if ((uintptr_t)kpage % 4 != 0) {
-		/* Word-aligned accesses perform better than unaligned accesses.
-		   Round the stack pointer down to a multiple of 4. */
-		kpage = (void *)(((uintptr_t)kpage / 4) * 4);
-	}
-
-	for (int i = 0; i <= argc; ++i) {
-		const int pos = argc - i; /* push args right to left */
-		kpage -= sizeof(char *);
-		if (pos == argc) {
-			memset(kpage, 0, sizeof(char *));
-		} else {
-			memcpy(kpage, argv + pos, sizeof(char *));
-			ASSERT(sizeof(char *) == sizeof(argv[pos]));
-		}
-	}
-
-	{
-		void *tmp = NULL;
-		kpage -= sizeof(tmp);
-		tmp = KPAGE_TO_ESP(kpage, kpage_end);
-		memcpy(kpage, &tmp, sizeof(tmp));
-		ASSERT(sizeof(char **) == sizeof(tmp));
-	}
-
-	kpage -= sizeof(argc);
-	memcpy(kpage, &argc, sizeof(int));
-	ASSERT(sizeof(int) == sizeof(argc));
-
-	/* Push a fake "return address". Although the entry function will never
-	 * return, its stack frame must have the same structure as any other. */
-	kpage -= sizeof(void (*)());
-	memset(kpage, 0, sizeof(void (*)()));
-
-	if_.esp = KPAGE_TO_ESP(kpage, kpage_end);
-	ASSERT(kpage_end - kpage == PHYS_BASE - if_.esp);
-	ASSERT(kpage_begin <= kpage && kpage <= kpage_end);
-#undef KPAGE_TO_ESP
-
-	/* TODO: rm hex_dump() */
-	const size_t span = kpage_end - kpage;
-	const uintptr_t label = (uintptr_t)PHYS_BASE - 4 - span;
-	hex_dump(label, kpage, span, true);
-
-	success = true;
-
-done:
 	/* If load failed, quit. */
 	palloc_free_page(file_name);
 	if (!success)
@@ -292,7 +211,7 @@ static bool load_segment(struct file *file,
    Stores the executable's entry point into *EIP
    and its initial stack pointer into *ESP.
    Returns true if successful, false otherwise. */
-bool
+static bool
 load(const char *file_name, void (**eip)(void), void **esp, void **kpage)
 {
 	struct thread *t = thread_current();
@@ -553,4 +472,88 @@ install_page(void *upage, void *kpage, bool writable)
 	   address, then map our page there. */
 	return (pagedir_get_page(t->pagedir, upage) == NULL &&
 	        pagedir_set_page(t->pagedir, upage, kpage, writable));
+}
+
+static bool
+prepare_executable_and_arguments(char *buf, struct intr_frame *if_)
+{
+	char *argv[32]; /* Handle ARG_MAX of 32. */
+	for (size_t i = 0; i < ARRAY_SIZE(argv); ++i) {
+		argv[i] = NULL;
+	}
+
+	void *kpage_begin = NULL;
+	void *kpage_end = NULL;
+	void *kpage = NULL;
+	int argc = 0;
+	char *save_ptr = NULL;
+
+#define KPAGE_TO_ESP(cur, end) (PHYS_BASE - (end - cur))
+
+	for (char *token = strtok_r(buf, " ", &save_ptr);
+	     (token != NULL) && ((size_t)argc < ARRAY_SIZE(argv));
+	     token = strtok_r(NULL, " ", &save_ptr), ++argc) {
+		if (kpage == NULL) {
+			/* load() executable, including setup_stack() */
+			if (!load(token, &if_->eip, &if_->esp, &kpage)) {
+				return false;
+			}
+			ASSERT(kpage != NULL);
+			kpage_begin = kpage;
+			/* Seek to last word of page. */
+			kpage += (PGSIZE - sizeof(int));
+			kpage_end = kpage;
+		}
+
+		const size_t size = strlen(token) + 1; /* Count ending NUL. */
+		kpage -= size;
+		memcpy(kpage, token, size);
+		argv[argc] = KPAGE_TO_ESP(kpage, kpage_end);
+	}
+
+	if ((uintptr_t)kpage % 4 != 0) {
+		/* Word-aligned accesses perform better than unaligned accesses.
+		   Round the stack pointer down to a multiple of 4. */
+		kpage = (void *)(((uintptr_t)kpage / 4) * 4);
+	}
+
+	for (int i = 0; i <= argc; ++i) {
+		const int pos = argc - i; /* push args right to left */
+		kpage -= sizeof(char *);
+		if (pos == argc) {
+			memset(kpage, 0, sizeof(char *));
+		} else {
+			memcpy(kpage, argv + pos, sizeof(char *));
+			ASSERT(sizeof(char *) == sizeof(argv[pos]));
+		}
+	}
+
+	{
+		void *tmp = NULL;
+		kpage -= sizeof(tmp);
+		tmp = KPAGE_TO_ESP(kpage, kpage_end);
+		memcpy(kpage, &tmp, sizeof(tmp));
+		ASSERT(sizeof(char **) == sizeof(tmp));
+	}
+
+	kpage -= sizeof(argc);
+	memcpy(kpage, &argc, sizeof(int));
+	ASSERT(sizeof(int) == sizeof(argc));
+
+	/* Push a fake "return address". Although the entry function will never
+	 * return, its stack frame must have the same structure as any other. */
+	kpage -= sizeof(void (*)());
+	memset(kpage, 0, sizeof(void (*)()));
+
+	if_->esp = KPAGE_TO_ESP(kpage, kpage_end);
+	ASSERT(kpage_end - kpage == PHYS_BASE - if_->esp);
+	ASSERT(kpage_begin <= kpage && kpage <= kpage_end);
+#undef KPAGE_TO_ESP
+
+	/* TODO: rm hex_dump() */
+	const size_t span = kpage_end - kpage;
+	const uintptr_t label = (uintptr_t)PHYS_BASE - 4 - span;
+	hex_dump(label, kpage, span, true);
+
+	return true;
 }
