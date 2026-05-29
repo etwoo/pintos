@@ -31,6 +31,54 @@ syscall_exit(struct intr_frame *f, long *stack)
 }
 
 static void
+syscall_exec(struct intr_frame *f, long *stack)
+{
+	(void)f; // TODO rm
+	(void)stack; // TODO rm
+	ASSERT(false); // TODO exec()
+}
+
+static void
+syscall_wait(struct intr_frame *f, long *stack)
+{
+	(void)f; // TODO rm
+	(void)stack; // TODO rm
+	ASSERT(false); // TODO wait()
+}
+
+static void
+syscall_create(struct intr_frame *f, long *stack)
+{
+	// TODO: use filesys_create() wrapper?
+}
+
+static void
+syscall_remove(struct intr_frame *f, long *stack)
+{
+	// TODO: use filesys_remove() wrapper?
+}
+
+static void
+syscall_open(struct intr_frame *f, long *stack)
+{
+	// TODO: use filesys_open() wrapper?
+	// TODO: store int fd -> struct file * mapping in thread_current()?
+	// TODO: skip STDIN_FILENO, STDOUT_FILENO (no stderr in pintos)
+}
+
+static void
+syscall_filesize(struct intr_frame *f, long *stack)
+{
+	// TODO: map fd -> struct file *, then call file_length()
+}
+
+static void
+syscall_read(struct intr_frame *f, long *stack)
+{
+	// TODO: map fd -> struct file *, then call file_read()
+}
+
+static void
 syscall_write(struct intr_frame *f, long *stack)
 {
 	const long fd = *stack;
@@ -67,6 +115,25 @@ syscall_write(struct intr_frame *f, long *stack)
 }
 
 static void
+syscall_seek(struct intr_frame *f, long *stack)
+{
+	// TODO: map fd -> struct file *, then call file_seek()
+}
+
+static void
+syscall_tell(struct intr_frame *f, long *stack)
+{
+	// TODO: map fd -> struct file *, then call file_tell()
+}
+
+static void
+syscall_close(struct intr_frame *f, long *stack)
+{
+	// TODO: map fd -> struct file *, then call file_close()
+	// TODO: clear fd -> struct file * mapping after file_close deallocates
+}
+
+static void
 syscall_handler(struct intr_frame *f)
 {
 	// TODO: validate esp before calling pagedir_get_page
@@ -85,41 +152,49 @@ syscall_handler(struct intr_frame *f)
 		syscall_exit(f, upage);
 		break;
 	case SYS_EXEC:
+		syscall_exec(f, upage);
 		break;
 	case SYS_WAIT:
+		syscall_wait(f, upage);
 		break;
 	case SYS_CREATE:
+		syscall_create(f, upage);
 		break;
 	case SYS_REMOVE:
+		syscall_remove(f, upage);
 		break;
 	case SYS_OPEN:
+		syscall_open(f, upage);
 		break;
 	case SYS_FILESIZE:
+		syscall_filesize(f, upage);
 		break;
 	case SYS_READ:
+		syscall_read(f, upage);
 		break;
 	case SYS_WRITE:
 		syscall_write(f, upage);
 		break;
 	case SYS_SEEK:
+		syscall_seek(f, upage);
 		break;
 	case SYS_TELL:
+		syscall_tell(f, upage);
 		break;
 	case SYS_CLOSE:
+		syscall_close(f, upage);
 		break;
 	case SYS_MMAP:
 	case SYS_MUNMAP:
-		// TODO: return error on unimplemented project 3 syscalls
-		break;
 	case SYS_CHDIR:
 	case SYS_MKDIR:
 	case SYS_READDIR:
 	case SYS_ISDIR:
 	case SYS_INUMBER:
-		// TODO: return error on unimplemented project 4 syscalls
+		ASSERT(false); // TODO: error on valid+unimplemented syscalls
 		break;
 	default:
-		ASSERT(false); // TODO: return error on invalid syscall number
+		ASSERT(false); // TODO: error on invalid syscall number
 		break;
 	}
 }
