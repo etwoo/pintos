@@ -53,9 +53,12 @@ process_execute(const char *file_name)
 static void
 start_process(void *file_name_)
 {
-	char *file_name = file_name_;
-	struct intr_frame if_;
+	bool success = false;
 
+	char *file_name = file_name_;
+	ASSERT(strlen(file_name) <= PGSIZE);
+
+	struct intr_frame if_;
 	/* Initialize interrupt frame. */
 	memset(&if_, 0, sizeof if_);
 	if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
@@ -70,20 +73,18 @@ start_process(void *file_name_)
 	void *kpage_begin = NULL;
 	void *kpage_end = NULL;
 	void *kpage = NULL;
-	bool success = true;
 	int argc = 0;
 	char *save_ptr = NULL;
 
 #define KPAGE_TO_ESP(cur, end) (PHYS_BASE - (end - cur))
 
 	for (char *token = strtok_r(file_name, " ", &save_ptr);
-	     success && (token != NULL) && ((size_t)argc < ARRAY_SIZE(argv));
+	     (token != NULL) && ((size_t)argc < ARRAY_SIZE(argv));
 	     token = strtok_r(NULL, " ", &save_ptr), ++argc) {
 		if (kpage == NULL) {
 			/* load() executable, including setup_stack() */
-			success = load(token, &if_.eip, &if_.esp, &kpage);
-			if (!success) {
-				break;
+			if (!load(token, &if_.eip, &if_.esp, &kpage)) {
+				goto done;
 			}
 			ASSERT(kpage != NULL);
 			kpage_begin = kpage;
@@ -92,15 +93,7 @@ start_process(void *file_name_)
 			kpage_end = kpage;
 		}
 
-		ASSERT(PHYS_BASE >= if_.esp);
-		ASSERT(PHYS_BASE - if_.esp <= PGSIZE);
-		const size_t capacity = PGSIZE - (PHYS_BASE - if_.esp);
 		const size_t size = strlen(token) + 1; /* Count ending NUL. */
-		if (size > capacity) {
-			success = false; /* Arguments exceed PGSIZE. */
-			break;
-		}
-
 		kpage -= size;
 		memcpy(kpage, token, size);
 		argv[argc] = KPAGE_TO_ESP(kpage, kpage_end);
@@ -142,7 +135,7 @@ start_process(void *file_name_)
 
 	if_.esp = KPAGE_TO_ESP(kpage, kpage_end);
 	ASSERT(kpage_end - kpage == PHYS_BASE - if_.esp);
-	ASSERT(kpage_begin <= kpage);
+	ASSERT(kpage_begin <= kpage && kpage <= kpage_end);
 #undef KPAGE_TO_ESP
 
 	/* TODO: rm hex_dump() */
@@ -150,6 +143,9 @@ start_process(void *file_name_)
 	const uintptr_t label = (uintptr_t)PHYS_BASE - 4 - span;
 	hex_dump(label, kpage, span, true);
 
+	success = true;
+
+done:
 	/* If load failed, quit. */
 	palloc_free_page(file_name);
 	if (!success)
