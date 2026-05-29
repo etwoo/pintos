@@ -55,15 +55,15 @@ start_process(void *file_name_)
 {
 	char *file_name = file_name_;
 	ASSERT(strlen(file_name) <= PGSIZE);
-
 	struct intr_frame if_;
-	/* Initialize interrupt frame. */
+	bool success;
+
+	/* Initialize interrupt frame and load executable. */
 	memset(&if_, 0, sizeof if_);
 	if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
 	if_.cs = SEL_UCSEG;
 	if_.eflags = FLAG_IF | FLAG_MBS;
-
-	const bool success = prepare_executable_and_arguments(file_name, &if_);
+	success = prepare_executable_and_arguments(file_name, &if_);
 
 	/* If load failed, quit. */
 	palloc_free_page(file_name);
