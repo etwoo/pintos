@@ -61,6 +61,7 @@ syscall_write(struct intr_frame *f, long *stack)
 	// TODO: if sz>512, call putbuf() on chunks, avoid holding console_lock
 	// for too long at once
 	putbuf(buffer_paddr, sz);
+	/* No buffered I/O, hence no need to copy to a bounce buffer. */
 
 	f->eax = 0; // TODO: set meaningful return value
 }
