@@ -54,7 +54,6 @@ static void
 start_process(void *file_name_)
 {
 	char *file_name = file_name_;
-	ASSERT(strlen(file_name) <= PGSIZE);
 	struct intr_frame if_;
 	bool success;
 
@@ -475,7 +474,7 @@ install_page(void *upage, void *kpage, bool writable)
 }
 
 static bool
-prepare_executable_and_arguments(char *buf, struct intr_frame *if_)
+prepare_executable_and_arguments(char *buffer, struct intr_frame *if_)
 {
 	char *argv[32]; /* Handle ARG_MAX of 32. */
 	for (size_t i = 0; i < ARRAY_SIZE(argv); ++i) {
@@ -490,7 +489,9 @@ prepare_executable_and_arguments(char *buf, struct intr_frame *if_)
 
 #define KPAGE_TO_ESP(cur, end) (PHYS_BASE - (end - cur))
 
-	for (char *token = strtok_r(buf, " ", &save_ptr);
+	const size_t buffer_size = strlen(buffer) + 1; /* with trailing null */
+
+	for (char *token = strtok_r(buffer, " ", &save_ptr);
 	     (token != NULL) && ((size_t)argc < ARRAY_SIZE(argv));
 	     token = strtok_r(NULL, " ", &save_ptr), ++argc) {
 		if (kpage == NULL) {
@@ -504,13 +505,15 @@ prepare_executable_and_arguments(char *buf, struct intr_frame *if_)
 			kpage += (PGSIZE - sizeof(int));
 			kpage_end = kpage;
 		}
-
-		const size_t size = strlen(token) + 1; /* Count ending NUL. */
-		kpage -= size;
-		memcpy(kpage, token, size);
-		// TODO: why -4 offset below? see also NOTE1
-		argv[argc] = KPAGE_TO_ESP(kpage, kpage_end) - 4;
+		argv[argc] = token;
 	}
+
+	ASSERT(buffer_size <= PGSIZE);
+	kpage = kpage_end - buffer_size;
+	memcpy(kpage, buffer, buffer_size);
+
+	// TODO: why -4 offset below fix arg offsets? see also NOTE1
+	void *buffer_as_uaddr = KPAGE_TO_ESP(kpage, kpage_end) - 4;
 
 	if ((uintptr_t)kpage % 4 != 0) {
 		/* Word-aligned accesses perform better than unaligned accesses.
@@ -524,7 +527,9 @@ prepare_executable_and_arguments(char *buf, struct intr_frame *if_)
 		if (pos == argc) {
 			memset(kpage, 0, sizeof(char *));
 		} else {
-			memcpy(kpage, argv + pos, sizeof(char *));
+			const size_t offset = argv[pos] - buffer;
+			char *uaddr = buffer_as_uaddr + offset;
+			memcpy(kpage, &uaddr, sizeof(char *));
 			ASSERT(sizeof(char *) == sizeof(argv[pos]));
 		}
 	}
@@ -546,7 +551,7 @@ prepare_executable_and_arguments(char *buf, struct intr_frame *if_)
 	kpage -= sizeof(void (*)());
 	memset(kpage, 0, sizeof(void (*)()));
 
-	kpage -= 4; // TODO: why does this sorta fix argc passing? NOTE1
+	kpage -= 4; // TODO: why does this seem to fix argc passing? NOTE1
 
 	if_->esp = KPAGE_TO_ESP(kpage, kpage_end);
 	// ASSERT(kpage_end - kpage == PHYS_BASE - if_->esp);
