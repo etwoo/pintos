@@ -1,11 +1,14 @@
 #include "userprog/syscall.h"
 
 #include "devices/shutdown.h"
+#include "filesys/filesys.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
+#include "threads/vaddr.h"
 #include "userprog/pagedir.h"
 
 #include <stdio.h>
+#include <string.h>
 #include <syscall-nr.h>
 
 static void syscall_handler(struct intr_frame *);
@@ -14,6 +17,14 @@ void
 syscall_init(void)
 {
 	intr_register_int(0x30, 3, INTR_ON, syscall_handler, "syscall");
+}
+
+static void NO_RETURN
+thread_exit_invalid_pointer_argument(struct intr_frame *f)
+{
+	f->eax = EINVAL;
+	thread_exit();
+	NOT_REACHED();
 }
 
 static void
@@ -33,23 +44,44 @@ syscall_exit(struct intr_frame *f, long *stack)
 static void
 syscall_exec(struct intr_frame *f, long *stack)
 {
-	(void)f; // TODO rm
-	(void)stack; // TODO rm
+	(void)f;       // TODO rm
+	(void)stack;   // TODO rm
 	ASSERT(false); // TODO exec()
 }
 
 static void
 syscall_wait(struct intr_frame *f, long *stack)
 {
-	(void)f; // TODO rm
-	(void)stack; // TODO rm
+	(void)f;       // TODO rm
+	(void)stack;   // TODO rm
 	ASSERT(false); // TODO wait()
 }
 
 static void
 syscall_create(struct intr_frame *f, long *stack)
 {
-	// TODO: use filesys_create() wrapper?
+	uint32_t *pagedir = thread_current()->pagedir;
+
+	const void *filename_uaddr = (void *)(*stack++);
+	if (!is_user_vaddr(filename_uaddr)) {
+		thread_exit_invalid_pointer_argument(f);
+	}
+
+	void *filename_paddr = pagedir_get_page(pagedir, filename_uaddr);
+	if (filename_paddr == NULL) {
+		thread_exit_invalid_pointer_argument(f);
+	}
+
+	const size_t span = pg_round_up(filename_uaddr) - filename_uaddr;
+	ASSERT(span < PGSIZE);
+	if (NULL == memchr(filename_paddr, '\0', span)) {
+		/* String parameter lacks null terminator. */
+		thread_exit_invalid_pointer_argument(f);
+	}
+
+	const unsigned sz = *stack++;
+	const bool created = filesys_create(filename_paddr, sz);
+	f->eax = created ? 1 : 0; /* create() returns bool, not integer code */
 }
 
 static void
@@ -194,7 +226,7 @@ syscall_handler(struct intr_frame *f)
 		ASSERT(false); // TODO: error on valid+unimplemented syscalls
 		break;
 	default:
-		ASSERT(false); // TODO: error on invalid syscall number
+		ASSERT(false); // TODO: ENOSYS on invalid syscall number
 		break;
 	}
 }
