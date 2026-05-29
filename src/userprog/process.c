@@ -534,11 +534,11 @@ prepare_executable_and_arguments(char *buffer, struct intr_frame *if_)
 	}
 
 	{
-		void *tmp = NULL;
-		kpage -= sizeof(tmp);
-		tmp = KPAGE_TO_ESP(kpage, kpage_end);
-		memcpy(kpage, &tmp, sizeof(tmp));
-		ASSERT(sizeof(char **) == sizeof(tmp));
+		void *uaddr = NULL;
+		kpage -= sizeof(uaddr);
+		uaddr = KPAGE_TO_ESP(kpage, kpage_end);
+		memcpy(kpage, &uaddr, sizeof(uaddr));
+		ASSERT(sizeof(char **) == sizeof(uaddr));
 	}
 
 	kpage -= sizeof(argc);
