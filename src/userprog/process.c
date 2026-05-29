@@ -55,37 +55,45 @@ start_process(void *file_name_)
 {
 	char *file_name = file_name_;
 	struct intr_frame if_;
-	bool success;
 
-	/* Initialize interrupt frame and load executable. */
+	/* Initialize interrupt frame. */
 	memset(&if_, 0, sizeof if_);
 	if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
 	if_.cs = SEL_UCSEG;
 	if_.eflags = FLAG_IF | FLAG_MBS;
-	success = load(file_name, &if_.eip, &if_.esp);
-
-	const void *top = if_.esp;
 
 	char *argv[32]; /* Handle ARG_MAX of 32. */
 	for (size_t i = 0; i < ARRAY_SIZE(argv); ++i) {
 		argv[i] = NULL;
 	}
 
+	bool first_load = false;
+	bool success = true;
 	int argc = 0;
-
 	char *token = NULL;
 	char *save_ptr = NULL;
+
 	for (token = strtok_r(file_name, " ", &save_ptr);
 	     success && (token != NULL) && ((size_t)argc < ARRAY_SIZE(argv));
 	     token = strtok_r(NULL, " ", &save_ptr), ++argc) {
-		ASSERT(if_.esp >= PHYS_BASE);
-		ASSERT(if_.esp - PHYS_BASE <= PGSIZE);
-		const size_t capacity = PGSIZE - (if_.esp - PHYS_BASE);
+		if (!first_load) {
+			first_load = true;
+			/* load() executable, including setup_stack() */
+			success = load(token, &if_.eip, &if_.esp);
+			if (!success) {
+				break;
+			}
+		}
+
+		ASSERT(PHYS_BASE >= if_.esp);
+		ASSERT(PHYS_BASE - if_.esp <= PGSIZE);
+		const size_t capacity = PGSIZE - (PHYS_BASE - if_.esp);
 		const size_t len = strlen(token);
 		if (len + 1 /* space for null terminator */ > capacity) {
 			success = false; /* Arguments exceed PGSIZE. */
 			break;
 		}
+
 		strlcpy(token, if_.esp, len);
 		argv[argc] = if_.esp;
 		if_.esp -= len;
@@ -121,7 +129,9 @@ start_process(void *file_name_)
 	 * return, its stack frame must have the same structure as any other. */
 	memset(if_.esp, 0, sizeof(void (*)()));
 
-	hex_dump((uintptr_t)top, top, if_.esp - top, true); // TODO rm
+	/* TODO: rm hex_dump() */
+	const uintptr_t end = (uintptr_t)if_.esp - 4;
+	hex_dump(end, if_.esp, PHYS_BASE - if_.esp, true);
 
 	/* If load failed, quit. */
 	palloc_free_page(file_name);
@@ -150,7 +160,9 @@ start_process(void *file_name_)
 int
 process_wait(tid_t child_tid UNUSED)
 {
-	return -1; // TODO: process_wait()
+	while (true) { // TODO: process_wait()
+	}
+	NOT_REACHED();
 }
 
 /* Free the current process's resources. */
