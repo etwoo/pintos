@@ -23,34 +23,36 @@ syscall_handler(struct intr_frame *f UNUSED)
 	// TODO: validate esp before calling pagedir_get_page
 	long *upage = pagedir_get_page(pagedir, f->esp);
 	ASSERT(upage != NULL); // TODO: error cleanly
-	printf("got upage %p\n", upage);
+	// printf("got upage %p\n", upage);
 
 	const long syscall_number = *upage;
-	printf("got syscall %ld\n", syscall_number);
+	// printf("got syscall %ld\n", syscall_number);
 	ASSERT(syscall_number == SYS_WRITE); // TODO validate syscall_number
 
 	++upage;
 
 	const long fd = *upage;
-	printf("got fd %ld\n", fd);
+	// printf("got fd %ld\n", fd);
 	ASSERT(fd == STDOUT_FILENO); // TODO validate fd
 
 	++upage;
 
 	const uintptr_t buffer_uaddr = *upage;
-	printf("got buffer_uaddr %p\n", (void *)buffer_uaddr);
+	// printf("got buffer_uaddr %p\n", (void *)buffer_uaddr);
 
 	// TODO: validate buffer_uaddr before calling pagedir_get_page
 	void *buffer_paddr = pagedir_get_page(pagedir, (void *)buffer_uaddr);
-	printf("got buffer_paddr %p\n", (void *)buffer_paddr);
+	// printf("got buffer_paddr %p\n", (void *)buffer_paddr);
 
 	++upage;
 
 	const long sz = *upage; // TODO: clamp buffer size?
-	printf("got size %ld\n", sz);
+	// printf("got size %ld\n", sz);
 
-	printf("best-effort buffer_paddr data:\n");
-	hex_dump(buffer_uaddr, buffer_paddr, sz, true); // TODO rm hex_dump()
+	// printf("best-effort buffer_paddr data:\n");
+	// printf("\n");
+	// hex_dump(buffer_uaddr, buffer_paddr, sz, true); // TODO rm hex_dump()
+	// hex_dump(0, buffer_paddr, sz, true); // TODO rm hex_dump()
 
 	// TODO: handle write() more generally
 	// TODO: if sz>512, call putbuf() on chunks, avoid holding console_lock
