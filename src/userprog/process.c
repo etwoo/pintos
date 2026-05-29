@@ -530,7 +530,6 @@ prepare_executable_and_arguments(char *buffer, struct intr_frame *if_)
 			const size_t offset = argv[pos] - buffer;
 			char *uaddr = buffer_as_uaddr + offset;
 			memcpy(kpage, &uaddr, sizeof(char *));
-			ASSERT(sizeof(char *) == sizeof(argv[pos]));
 		}
 	}
 
