@@ -26,13 +26,13 @@ thread_exit_invalid_pointer_argument(struct intr_frame *f)
 	thread_exit();
 }
 
-static void
+static void NO_RETURN
 syscall_halt(void)
 {
 	shutdown_power_off();
 }
 
-static void
+static void NO_RETURN
 syscall_exit(struct intr_frame *f, long *stack)
 {
 	const long status = *stack;
