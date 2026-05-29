@@ -52,5 +52,10 @@ syscall_handler(struct intr_frame *f UNUSED)
 	printf("best-effort buffer_paddr data:\n");
 	hex_dump(buffer_uaddr, buffer_paddr, sz, true); // TODO rm hex_dump()
 
+	// TODO: handle write() more generally
+	// TODO: if sz>512, call putbuf() on chunks, avoid holding console_lock
+	// for too long at once
+	putbuf(buffer_paddr, sz);
+
 	f->eax = 0; // TODO: set meaningful return value
 }
