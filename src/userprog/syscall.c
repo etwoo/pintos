@@ -52,6 +52,5 @@ syscall_handler(struct intr_frame *f UNUSED)
 	printf("best-effort buffer_paddr data:\n");
 	hex_dump(buffer_uaddr, buffer_paddr, sz, true); // TODO rm hex_dump()
 
-	printf("system call!\n");
-	thread_exit();
+	f->eax = 0; // TODO: set meaningful return value
 }
