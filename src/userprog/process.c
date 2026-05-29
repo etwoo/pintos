@@ -75,6 +75,8 @@ start_process(void *file_name_)
 	char *token = NULL;
 	char *save_ptr = NULL;
 
+#define KPAGE_TO_ESP(cur, end) (PHYS_BASE - (end - cur))
+
 	for (token = strtok_r(file_name, " ", &save_ptr);
 	     success && (token != NULL) && ((size_t)argc < ARRAY_SIZE(argv));
 	     token = strtok_r(NULL, " ", &save_ptr), ++argc) {
@@ -102,22 +104,18 @@ start_process(void *file_name_)
 
 		kpage -= size;
 		memcpy(kpage, token, size);
-
-		if_.esp -= size; // TODO: keep kpage+esp in sync more cleanly
-		argv[argc] = if_.esp;
+		argv[argc] = KPAGE_TO_ESP(kpage, kpage_end);
 	}
 
 	if ((uintptr_t)kpage % 4 != 0) {
 		/* Word-aligned accesses perform better than unaligned accesses.
 		   Round the stack pointer down to a multiple of 4. */
 		kpage = (void *)(((uintptr_t)kpage / 4) * 4);
-		if_.esp = (void *)(((uintptr_t)if_.esp / 4) * 4); // TODO sync
 	}
 
 	for (int i = 0; i <= argc; ++i) {
 		const int pos = argc - i; /* push args right to left */
 		kpage -= sizeof(char *);
-		if_.esp -= sizeof(char *); // TODO sync
 		if (pos == argc) {
 			memset(kpage, 0, sizeof(char *));
 		} else {
@@ -126,23 +124,27 @@ start_process(void *file_name_)
 		}
 	}
 
-	kpage -= sizeof(&argv);
-	if_.esp -= sizeof(&argv); // TODO sync
-	memcpy(kpage, &if_.esp, sizeof(if_.esp));
-	ASSERT(sizeof(char **) == sizeof(if_.esp));
+	{
+		void *tmp = NULL;
+		kpage -= sizeof(tmp);
+		tmp = KPAGE_TO_ESP(kpage, kpage_end);
+		memcpy(kpage, &tmp, sizeof(tmp));
+		ASSERT(sizeof(char **) == sizeof(tmp));
+	}
 
 	kpage -= sizeof(argc);
-	if_.esp -= sizeof(argc); // TODO sync
 	memcpy(kpage, &argc, sizeof(int));
 	ASSERT(sizeof(int) == sizeof(argc));
 
 	/* Push a fake "return address". Although the entry function will never
 	 * return, its stack frame must have the same structure as any other. */
 	kpage -= sizeof(void (*)());
-	if_.esp -= sizeof(void (*)()); // TODO sync
 	memset(kpage, 0, sizeof(void (*)()));
 
+	if_.esp = KPAGE_TO_ESP(kpage, kpage_end);
+	ASSERT(kpage_end - kpage == PHYS_BASE - if_.esp);
 	ASSERT(kpage_begin <= kpage);
+#undef KPAGE_TO_ESP
 
 	/* TODO: rm hex_dump() */
 	const size_t span = kpage_end - kpage;
