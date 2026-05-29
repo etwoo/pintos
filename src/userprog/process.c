@@ -67,7 +67,8 @@ start_process(void *file_name_)
 		argv[i] = NULL;
 	}
 
-	void *kpage_on_load = NULL;
+	void *kpage_begin = NULL;
+	void *kpage_end = NULL;
 	void *kpage = NULL;
 	bool success = true;
 	int argc = 0;
@@ -84,7 +85,10 @@ start_process(void *file_name_)
 				break;
 			}
 			ASSERT(kpage != NULL);
-			kpage_on_load = kpage;
+			kpage_begin = kpage;
+			/* Seek to last word of page. */
+			kpage += (PGSIZE - sizeof(int));
+			kpage_end = kpage;
 		}
 
 		ASSERT(PHYS_BASE >= if_.esp);
@@ -138,8 +142,10 @@ start_process(void *file_name_)
 	if_.esp -= sizeof(void (*)()); // TODO sync
 	memset(kpage, 0, sizeof(void (*)()));
 
+	ASSERT(kpage_begin <= kpage);
+
 	/* TODO: rm hex_dump() */
-	const size_t span = kpage_on_load - kpage;
+	const size_t span = kpage_end - kpage;
 	const uintptr_t label = (uintptr_t)PHYS_BASE - 4 - span;
 	hex_dump(label, kpage, span, true);
 
