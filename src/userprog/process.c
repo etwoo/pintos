@@ -13,6 +13,7 @@
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
 
+#include <array.h>
 #include <debug.h>
 #include <inttypes.h>
 #include <round.h>
@@ -62,6 +63,65 @@ start_process(void *file_name_)
 	if_.cs = SEL_UCSEG;
 	if_.eflags = FLAG_IF | FLAG_MBS;
 	success = load(file_name, &if_.eip, &if_.esp);
+
+	const void *top = if_.esp;
+
+	char *argv[32]; /* Handle ARG_MAX of 32. */
+	for (size_t i = 0; i < ARRAY_SIZE(argv); ++i) {
+		argv[i] = NULL;
+	}
+
+	int argc = 0;
+
+	char *token = NULL;
+	char *save_ptr = NULL;
+	for (token = strtok_r(file_name, " ", &save_ptr);
+	     success && (token != NULL) && ((size_t)argc < ARRAY_SIZE(argv));
+	     token = strtok_r(NULL, " ", &save_ptr), ++argc) {
+		ASSERT(if_.esp >= PHYS_BASE);
+		ASSERT(if_.esp - PHYS_BASE <= PGSIZE);
+		const size_t capacity = PGSIZE - (if_.esp - PHYS_BASE);
+		const size_t len = strlen(token);
+		if (len + 1 /* space for null terminator */ > capacity) {
+			success = false; /* Arguments exceed PGSIZE. */
+			break;
+		}
+		strlcpy(token, if_.esp, len);
+		argv[argc] = if_.esp;
+		if_.esp -= len;
+		if_.esp -= 1; /* Seek past null terminator. */
+	}
+
+	if ((uintptr_t)if_.esp % 4 != 0) {
+		/* Word-aligned accesses perform better than unaligned accesses.
+		   Round the stack pointer down to a multiple of 4. */
+		if_.esp = (void *)(((uintptr_t)if_.esp / 4) * 4);
+	}
+
+	for (int i = 0; i <= argc; ++i) {
+		const int pos = argc - i; /* push args right to left */
+		if (pos == argc) {
+			memset(if_.esp, 0, sizeof(char *));
+		} else {
+			memcpy(if_.esp, argv + pos, sizeof(char *));
+			ASSERT(sizeof(char *) == sizeof(argv[pos]));
+		}
+		if_.esp -= sizeof(char *);
+	}
+
+	memcpy(if_.esp, &argv, sizeof(char **));
+	ASSERT(sizeof(char **) == sizeof(&argv));
+	if_.esp -= sizeof(&argv);
+
+	memcpy(if_.esp, &argc, sizeof(int));
+	ASSERT(sizeof(int) == sizeof(argc));
+	if_.esp -= sizeof(argc);
+
+	/* Push a fake "return address". Although the entry function will never
+	 * return, its stack frame must have the same structure as any other. */
+	memset(if_.esp, 0, sizeof(void (*)()));
+
+	hex_dump((uintptr_t)top, top, if_.esp - top, true); // TODO rm
 
 	/* If load failed, quit. */
 	palloc_free_page(file_name);
@@ -443,7 +503,7 @@ setup_stack(void **esp)
 		                       kpage,
 		                       true);
 		if (success)
-			*esp = PHYS_BASE;
+			*esp = PHYS_BASE - 4; /* 0xbffffffc */ // TODO ok?
 		else
 			palloc_free_page(kpage);
 	}
