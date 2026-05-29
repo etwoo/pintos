@@ -67,6 +67,7 @@ start_process(void *file_name_)
 		argv[i] = NULL;
 	}
 
+	void *kpage_on_load = NULL;
 	void *kpage = NULL;
 	bool success = true;
 	int argc = 0;
@@ -83,55 +84,64 @@ start_process(void *file_name_)
 				break;
 			}
 			ASSERT(kpage != NULL);
+			kpage_on_load = kpage;
 		}
 
 		ASSERT(PHYS_BASE >= if_.esp);
 		ASSERT(PHYS_BASE - if_.esp <= PGSIZE);
 		const size_t capacity = PGSIZE - (PHYS_BASE - if_.esp);
-		const size_t len = strlen(token);
-		if (len + 1 /* space for null terminator */ > capacity) {
+		const size_t size = strlen(token) + 1; /* Count ending NUL. */
+		if (size > capacity) {
 			success = false; /* Arguments exceed PGSIZE. */
 			break;
 		}
 
-		strlcpy(token, kpage, len);
-		argv[argc] = kpage;
-		kpage -= len;
-		kpage -= 1; /* Seek past null terminator. */
+		kpage -= size;
+		memcpy(kpage, token, size);
+
+		if_.esp -= size; // TODO: keep kpage+esp in sync more cleanly
+		argv[argc] = if_.esp;
 	}
 
 	if ((uintptr_t)kpage % 4 != 0) {
 		/* Word-aligned accesses perform better than unaligned accesses.
 		   Round the stack pointer down to a multiple of 4. */
 		kpage = (void *)(((uintptr_t)kpage / 4) * 4);
+		if_.esp = (void *)(((uintptr_t)if_.esp / 4) * 4); // TODO sync
 	}
 
 	for (int i = 0; i <= argc; ++i) {
 		const int pos = argc - i; /* push args right to left */
+		kpage -= sizeof(char *);
+		if_.esp -= sizeof(char *); // TODO sync
 		if (pos == argc) {
 			memset(kpage, 0, sizeof(char *));
 		} else {
 			memcpy(kpage, argv + pos, sizeof(char *));
 			ASSERT(sizeof(char *) == sizeof(argv[pos]));
 		}
-		kpage -= sizeof(char *);
 	}
 
-	memcpy(kpage, &argv, sizeof(char **));
-	ASSERT(sizeof(char **) == sizeof(&argv));
 	kpage -= sizeof(&argv);
+	if_.esp -= sizeof(&argv); // TODO sync
+	memcpy(kpage, &if_.esp, sizeof(if_.esp));
+	ASSERT(sizeof(char **) == sizeof(if_.esp));
 
+	kpage -= sizeof(argc);
+	if_.esp -= sizeof(argc); // TODO sync
 	memcpy(kpage, &argc, sizeof(int));
 	ASSERT(sizeof(int) == sizeof(argc));
-	kpage -= sizeof(argc);
 
 	/* Push a fake "return address". Although the entry function will never
 	 * return, its stack frame must have the same structure as any other. */
+	kpage -= sizeof(void (*)());
+	if_.esp -= sizeof(void (*)()); // TODO sync
 	memset(kpage, 0, sizeof(void (*)()));
 
 	/* TODO: rm hex_dump() */
-	const uintptr_t end = (uintptr_t)if_.esp - 4;
-	hex_dump(end, kpage, PHYS_BASE - if_.esp, true);
+	const size_t span = kpage_on_load - kpage;
+	const uintptr_t label = (uintptr_t)PHYS_BASE - 4 - span;
+	hex_dump(label, kpage, span, true);
 
 	/* If load failed, quit. */
 	palloc_free_page(file_name);
@@ -515,7 +525,7 @@ setup_stack(void **esp, void **kpage)
 		                       *kpage,
 		                       true);
 		if (success)
-			*esp = PHYS_BASE - 4; /* 0xbffffffc */ // TODO ok?
+			*esp = PHYS_BASE;
 		else
 			palloc_free_page(*kpage);
 	}
