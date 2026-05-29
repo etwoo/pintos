@@ -26,6 +26,31 @@ thread_exit_invalid_pointer_argument(struct intr_frame *f)
 	thread_exit();
 }
 
+static void *
+syscall_arg_pop_str(long *stack)
+{
+	uint32_t *pagedir = thread_current()->pagedir;
+
+	const void *filename_uaddr = (void *)(*stack);
+	if (!is_user_vaddr(filename_uaddr)) {
+		return NULL;
+	}
+
+	void *filename_paddr = pagedir_get_page(pagedir, filename_uaddr);
+	if (filename_paddr == NULL) {
+		return NULL;
+	}
+
+	const size_t span = pg_round_up(filename_uaddr) - filename_uaddr;
+	ASSERT(span < PGSIZE);
+	if (NULL == memchr(filename_paddr, '\0', span)) {
+		/* String parameter lacks null terminator. */
+		return NULL;
+	}
+
+	return filename_paddr;
+}
+
 static void NO_RETURN
 syscall_halt(void)
 {
@@ -59,27 +84,13 @@ syscall_wait(struct intr_frame *f, long *stack)
 static void
 syscall_create(struct intr_frame *f, long *stack)
 {
-	uint32_t *pagedir = thread_current()->pagedir;
-
-	const void *filename_uaddr = (void *)(*stack++);
-	if (!is_user_vaddr(filename_uaddr)) {
-		thread_exit_invalid_pointer_argument(f);
-	}
-
-	void *filename_paddr = pagedir_get_page(pagedir, filename_uaddr);
-	if (filename_paddr == NULL) {
-		thread_exit_invalid_pointer_argument(f);
-	}
-
-	const size_t span = pg_round_up(filename_uaddr) - filename_uaddr;
-	ASSERT(span < PGSIZE);
-	if (NULL == memchr(filename_paddr, '\0', span)) {
-		/* String parameter lacks null terminator. */
+	void *filename = syscall_arg_pop_str(stack++);
+	if (filename == NULL) {
 		thread_exit_invalid_pointer_argument(f);
 	}
 
 	const unsigned sz = *stack++;
-	const bool created = filesys_create(filename_paddr, sz);
+	const bool created = filesys_create(filename, sz);
 	f->eax = created ? 1 : 0; /* create() returns bool, not integer code */
 }
 
