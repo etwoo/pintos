@@ -27,6 +27,7 @@
 #ifdef USERPROG
 #include "userprog/exception.h"
 #include "userprog/gdt.h"
+#include "userprog/io.h"
 #include "userprog/process.h"
 #include "userprog/syscall.h"
 #include "userprog/tss.h"
@@ -114,6 +115,7 @@ main(void)
 	input_init();
 #ifdef USERPROG
 	exception_init();
+	io_init();
 	syscall_init();
 #endif
 
@@ -136,7 +138,7 @@ main(void)
 
 	/* Finish up. */
 	shutdown();
-	thread_exit();
+	thread_exit(0);
 }
 
 /* Clear the "BSS", a segment that should be initialized to
@@ -280,7 +282,7 @@ parse_options(char **argv)
 static void
 run_task(char **argv)
 {
-	const char *task = argv[1];
+	char *task = argv[1];
 
 	printf("Executing '%s':\n", task);
 #ifdef USERPROG

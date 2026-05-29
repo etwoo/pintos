@@ -1,6 +1,8 @@
 #ifndef THREADS_THREAD_H
 #define THREADS_THREAD_H
 
+#include "threads/synch.h"
+
 #include <debug.h>
 #include <fixed-point.h>
 #include <list.h>
@@ -19,6 +21,10 @@ enum thread_status {
 typedef int tid_t;
 #define TID_ERROR ((tid_t) - 1) /* Error value for tid_t. */
 
+#define EXIT_EXCEPTION -1 /* Terminated by kernel, killed by exception. */
+#define EXIT_UNSET -2     /* Status code not yet known. */
+#define EXIT_NO_LOAD -3   /* Early error in load(). */
+
 /* Thread priorities. */
 #define PRI_MIN 0      /* Lowest priority. */
 #define PRI_DEFAULT 31 /* Default priority. */
@@ -28,6 +34,13 @@ typedef int tid_t;
 #define NICE_MIN -20   /* Least nice (most selfish). */
 #define NICE_DEFAULT 0 /* Default nice. */
 #define NICE_MAX 20    /* Most nice (least selfish). */
+
+/* Thread exec(), wait(), and exit(). */
+struct thread_wait_code {
+	tid_t tid;
+	int code;
+	struct list_elem elem;
+};
 
 /* A kernel thread or user process.
 
@@ -95,7 +108,16 @@ struct thread {
 	struct thread *donate[8];  /* Priority donation. */
 	int nice;                  /* thread_mlfqs: niceness. */
 	struct fix_t recent_cpu;   /* thread_mlfqs: recent_cpu. */
-	struct list_elem allelem;  /* List element for all threads list. */
+	struct list fd_table;      /* userprog: file descriptor table. */
+	int fd_generator;          /* userprog: file descriptor generator. */
+	struct {
+		tid_t allowed_parent;
+		struct lock lock;
+		struct condition on_exit;
+		struct list children;
+	} wait; /* support for process_execute() and process_wait() */
+
+	struct list_elem allelem; /* List element for all threads list. */
 
 	/* Shared between thread.c and synch.c. */
 	struct list_elem elem; /* List element. */
@@ -130,7 +152,7 @@ struct thread *thread_current(void);
 tid_t thread_tid(void);
 const char *thread_name(void);
 
-void thread_exit(void) NO_RETURN;
+void thread_exit(int status) NO_RETURN;
 void thread_yield(void);
 
 /* Performs some operation on thread t, given auxiliary data AUX. */
@@ -148,5 +170,7 @@ int thread_get_load_avg(void);
 
 bool is_thread(struct thread *t);
 struct thread *thread_pop_by_priority(struct list *threads);
+
+void thread_signal_exit(tid_t parent, tid_t child, int child_status);
 
 #endif /* threads/thread.h */

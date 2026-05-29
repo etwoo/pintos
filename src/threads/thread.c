@@ -203,6 +203,7 @@ thread_create(const char *name, int priority, thread_func *function, void *aux)
 	/* Initialize thread. */
 	init_thread(t, name, priority);
 	tid = t->tid = allocate_tid();
+	t->wait.allowed_parent = thread_tid();
 
 	/* Stack frame for kernel_thread(). */
 	kf = alloc_frame(t, sizeof *kf);
@@ -313,12 +314,12 @@ recall_donation_from_dying_thread(struct thread *t, void *aux)
 /* Deschedules the current thread and destroys it.  Never
    returns to the caller. */
 void
-thread_exit(void)
+thread_exit(int status)
 {
 	ASSERT(!intr_context());
 
 #ifdef USERPROG
-	process_exit();
+	process_exit(status);
 #endif
 
 	/* Remove thread from all threads list, set our status to dying,
@@ -508,7 +509,8 @@ kernel_thread(thread_func *function, void *aux)
 
 	intr_enable(); /* The scheduler runs with interrupts off. */
 	function(aux); /* Execute the thread function. */
-	thread_exit(); /* If function() returns, kill the thread. */
+
+	thread_exit(0); /* If function() returns, kill the thread. */
 }
 
 /* Returns the running thread. */
@@ -549,6 +551,12 @@ init_thread(struct thread *t, const char *name, int priority)
 	memset(t, 0, sizeof *t);
 	t->status = THREAD_BLOCKED;
 	strlcpy(t->name, name, sizeof t->name);
+	for (size_t i = 0; i < sizeof(t->name); ++i) {
+		if (t->name[i] == ' ') {
+			t->name[i] = '\0';
+			break;
+		}
+	}
 	t->stack = (uint8_t *)t + PGSIZE;
 	t->priority = priority;
 	for (size_t i = 0; i < ARRAY_SIZE(t->donate); ++i) {
@@ -556,6 +564,12 @@ init_thread(struct thread *t, const char *name, int priority)
 	}
 	t->nice = NICE_DEFAULT;
 	t->recent_cpu = i32_to_fixed(0);
+	list_init(&t->fd_table);
+	t->fd_generator = STDERR_FILENO + 1; /* first available fd value */
+	t->wait.allowed_parent = TID_ERROR;
+	lock_init(&t->wait.lock);
+	cond_init(&t->wait.on_exit);
+	list_init(&t->wait.children);
 	t->magic = THREAD_MAGIC;
 
 	old_level = intr_disable();
@@ -791,4 +805,49 @@ thread_get_priority_of_mlfqs(struct thread *t)
 	                 ? PRI_MIN
 	                 : ((priority >= PRI_MAX) ? PRI_MAX : priority));
 	return clamped;
+}
+
+void
+thread_signal_exit(tid_t parent, tid_t child, int child_status)
+{
+	if (parent == TID_ERROR) {
+		return;
+	}
+
+	struct thread *t = NULL;
+	enum intr_level old_level = intr_disable();
+	{
+		struct list_elem *e = list_begin(&all_list);
+		for (; e != list_end(&all_list); e = list_next(e)) {
+			struct thread *candidate =
+				list_entry(e, struct thread, allelem);
+			if (candidate->tid == parent) {
+				t = candidate;
+				break;
+			}
+		}
+	}
+	if (t == NULL) {
+		intr_set_level(old_level);
+		return;
+	}
+
+	/* Acquire thread-level lock, and then restore interrupts. */
+	lock_acquire(&t->wait.lock);
+	intr_set_level(old_level);
+
+	struct list_elem *e = list_begin(&t->wait.children);
+	for (; e != list_end(&t->wait.children); e = list_next(e)) {
+		struct thread_wait_code *twc =
+			list_entry(e, struct thread_wait_code, elem);
+		if (twc->tid == child) {
+			ASSERT(twc->code == EXIT_UNSET);
+			/* Update entry registered by process_execute(). */
+			twc->code = child_status;
+			cond_broadcast(&t->wait.on_exit, &t->wait.lock);
+			break;
+		}
+	}
+
+	lock_release(&t->wait.lock);
 }
