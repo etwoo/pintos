@@ -27,25 +27,25 @@ thread_exit_invalid_pointer_argument(struct intr_frame *f)
 }
 
 static void *
-syscall_arg_pop_str(long *stack)
+syscall_arg_peek_as_cstring(struct intr_frame *f, long *stack)
 {
 	uint32_t *pagedir = thread_current()->pagedir;
 
 	const void *filename_uaddr = (void *)(*stack);
 	if (!is_user_vaddr(filename_uaddr)) {
-		return NULL;
+		thread_exit_invalid_pointer_argument(f);
 	}
 
 	void *filename_paddr = pagedir_get_page(pagedir, filename_uaddr);
 	if (filename_paddr == NULL) {
-		return NULL;
+		thread_exit_invalid_pointer_argument(f);
 	}
 
 	const size_t span = pg_round_up(filename_uaddr) - filename_uaddr;
 	ASSERT(span < PGSIZE);
 	if (NULL == memchr(filename_paddr, '\0', span)) {
 		/* String parameter lacks null terminator. */
-		return NULL;
+		thread_exit_invalid_pointer_argument(f);
 	}
 
 	return filename_paddr;
@@ -84,11 +84,7 @@ syscall_wait(struct intr_frame *f, long *stack)
 static void
 syscall_create(struct intr_frame *f, long *stack)
 {
-	void *filename = syscall_arg_pop_str(stack++);
-	if (filename == NULL) {
-		thread_exit_invalid_pointer_argument(f);
-	}
-
+	void *filename = syscall_arg_peek_as_cstring(f, stack++);
 	const unsigned sz = *stack++;
 	const bool created = filesys_create(filename, sz);
 	f->eax = created ? 1 : 0; /* create() returns bool, not integer code */
@@ -97,7 +93,9 @@ syscall_create(struct intr_frame *f, long *stack)
 static void
 syscall_remove(struct intr_frame *f, long *stack)
 {
-	// TODO: use filesys_remove() wrapper?
+	void *filename = syscall_arg_peek_as_cstring(f, stack++);
+	const bool removed = filesys_remove(filename);
+	f->eax = removed ? 1 : 0; /* remove() returns bool, not integer code */
 }
 
 static void
