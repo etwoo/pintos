@@ -24,7 +24,6 @@ thread_exit_invalid_pointer_argument(struct intr_frame *f)
 {
 	f->eax = EINVAL;
 	thread_exit();
-	NOT_REACHED();
 }
 
 static void
