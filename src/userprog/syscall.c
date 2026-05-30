@@ -15,7 +15,8 @@
 #include <string.h>
 #include <syscall-nr.h>
 
-#define IO_ERROR -1 /* Conceptually distinct from FD_INVALID. */
+#define IO_SUCCESS 0 /* Successful IO (when not returning fd or size). */
+#define IO_FAIL -1   /* Conceptually distinct from FD_INVALID. */
 
 static void syscall_handler(struct intr_frame *);
 
@@ -151,7 +152,7 @@ syscall_open(struct intr_frame *f, int *stack)
 	if (fh == NULL) {
 		f->eax = FD_INVALID;
 	} else {
-		f->eax = fd_create(fh);
+		f->eax = fd_register(fh);
 	}
 }
 
@@ -179,7 +180,7 @@ syscall_read(struct intr_frame *f, int *stack)
 
 	if (fd == STDIN_FILENO) {
 		if (sz == 0) {
-			f->eax = IO_ERROR;
+			f->eax = IO_FAIL;
 		} else {
 			uint8_t *p = buffer;
 			*p = input_getc();
@@ -190,7 +191,7 @@ syscall_read(struct intr_frame *f, int *stack)
 
 	struct file *file = fd_to_file(fd);
 	if (file == NULL) {
-		f->eax = IO_ERROR;
+		f->eax = IO_FAIL;
 	} else {
 		acquire_io_lock();
 		f->eax = file_read(file, buffer, sz);
@@ -218,7 +219,7 @@ syscall_write(struct intr_frame *f, int *stack)
 
 	struct file *file = fd_to_file(fd);
 	if (file == NULL) {
-		f->eax = IO_ERROR;
+		f->eax = IO_FAIL;
 	} else {
 		acquire_io_lock();
 		f->eax = file_write(file, buffer, sz);
@@ -234,12 +235,12 @@ syscall_seek(struct intr_frame *f, int *stack)
 
 	struct file *file = fd_to_file(fd);
 	if (file == NULL) {
-		f->eax = IO_ERROR;
+		f->eax = IO_FAIL;
 	} else {
 		acquire_io_lock();
 		file_seek(file, sz);
 		release_io_lock();
-		f->eax = 0;
+		f->eax = IO_SUCCESS;
 	}
 }
 
@@ -250,7 +251,7 @@ syscall_tell(struct intr_frame *f, int *stack)
 
 	struct file *file = fd_to_file(fd);
 	if (file == NULL) {
-		f->eax = IO_ERROR;
+		f->eax = IO_FAIL;
 	} else {
 		acquire_io_lock();
 		f->eax = file_tell(file);
@@ -261,8 +262,18 @@ syscall_tell(struct intr_frame *f, int *stack)
 static void
 syscall_close(struct intr_frame *f, int *stack)
 {
-	// TODO: map fd -> struct file *, then call file_close()
-	// TODO: clear fd -> struct file * mapping after file_close deallocates
+	const int fd = *stack++;
+
+	struct file *file = fd_to_file(fd);
+	if (file == NULL) {
+		f->eax = IO_FAIL;
+	} else {
+		fd_unregister(fd);
+		acquire_io_lock();
+		file_close(file);
+		release_io_lock();
+		f->eax = IO_SUCCESS;
+	}
 }
 
 static void
