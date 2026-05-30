@@ -135,11 +135,12 @@ process_wait(tid_t child)
 	int result = -1;
 	struct thread *t = thread_current();
 
+	lock_acquire(&t->wait.lock);
+
 	while (child != TID_ERROR) {
+		ASSERT(lock_held_by_current_thread(&t->wait.lock));
+
 		struct thread_wait_code *got_child = NULL;
-
-		lock_acquire(&t->wait.lock);
-
 		struct list_elem *e = list_begin(&t->wait.children);
 		for (; e != list_end(&t->wait.children); e = list_next(e)) {
 			struct thread_wait_code *twc =
