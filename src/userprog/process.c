@@ -657,10 +657,5 @@ prepare_executable_and_arguments(char *buffer, struct intr_frame *if_)
 	ASSERT(kpage_begin <= kpage && kpage <= kpage_end);
 #undef KPAGE_TO_ESP
 
-	/* TODO: rm hex_dump() */
-	const size_t span = kpage_end - kpage;
-	const uintptr_t label = (uintptr_t)PHYS_BASE - 4 - span;
-	hex_dump(label, kpage, span, true);
-
 	return true;
 }
