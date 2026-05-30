@@ -128,49 +128,6 @@ start_process(void *args_)
 	NOT_REACHED();
 }
 
-struct thread_match_and_wait_args {
-	tid_t waiter_tid;
-	tid_t target_tid;
-	int target_code;
-};
-
-// TODO: switch away from thread_foreach() so lock/cvar below work
-static void
-thread_match_and_wait(struct thread *t, void *aux)
-{
-	struct thread_match_and_wait_args *args = aux;
-	if (t->tid == args->waiter_tid) {
-		return;
-	}
-
-	while (true) {
-		struct thread_wait_code *got_match = NULL;
-
-		lock_acquire(&t->wait.lock);
-
-		struct list_elem *e = list_begin(&t->wait.children);
-		for (; e != list_end(&t->wait.children); e = list_next(e)) {
-			struct thread_wait_code *twc =
-				list_entry(e, struct thread_wait_code, elem);
-			if (twc->tid == args->target_tid &&
-			    twc->code != EXIT_UNSET) {
-				got_match = twc;
-				break;
-			}
-		}
-
-		if (got_match != NULL) {
-			args->target_code = got_match->code;
-			list_remove(&got_match->elem);
-			free(got_match);
-			lock_release(&t->wait.lock);
-			break;
-		}
-
-		cond_wait(&t->wait.on_exit, &t->wait.lock);
-	}
-}
-
 /* Waits for thread TID to die and returns its exit status.  If
    it was terminated by the kernel (i.e. killed due to an
    exception), returns -1.  If TID is invalid or if it was not a
@@ -181,22 +138,38 @@ thread_match_and_wait(struct thread *t, void *aux)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait(tid_t child_tid)
+process_wait(tid_t child)
 {
-	if (child_tid == TID_ERROR) {
-		return TID_ERROR;
+	int result = -1;
+	struct thread *t = thread_current();
+
+	while (child != TID_ERROR) {
+		struct thread_wait_code *got_child = NULL;
+
+		lock_acquire(&t->wait.lock);
+
+		struct list_elem *e = list_begin(&t->wait.children);
+		for (; e != list_end(&t->wait.children); e = list_next(e)) {
+			struct thread_wait_code *twc =
+				list_entry(e, struct thread_wait_code, elem);
+			if (twc->tid == child && twc->code != EXIT_UNSET) {
+				got_child = twc;
+				break;
+			}
+		}
+
+		if (got_child != NULL) {
+			result = got_child->code;
+			list_remove(&got_child->elem);
+			free(got_child);
+			lock_release(&t->wait.lock);
+			break;
+		}
+
+		cond_wait(&t->wait.on_exit, &t->wait.lock);
 	}
 
-	struct thread_match_and_wait_args args = {
-		.waiter_tid = thread_tid(),
-		.target_tid = child_tid,
-		.target_code = EXIT_UNSET,
-	};
-	enum intr_level old_level = intr_disable(); // TODO rm
-	thread_foreach(thread_match_and_wait, &args);
-	intr_set_level(old_level);
-
-	return args.target_code;
+	return result;
 }
 
 struct thread_status_on_exit_args {
@@ -209,6 +182,8 @@ struct thread_status_on_exit_args {
 static void
 thread_status_on_exit(struct thread *t, void *aux)
 {
+	ASSERT(intr_get_level() == INTR_OFF);
+
 	struct thread_status_on_exit_args *args = aux;
 	if (t->tid == args->waiter_tid) {
 		return;
