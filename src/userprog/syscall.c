@@ -63,10 +63,17 @@ syscall_arg_peek(struct intr_frame *f, int *stack, enum peek_mode m)
 }
 
 static unsigned
-syscall_arg_peek_unsigned(int *stack)
+syscall_arg_peek_unsigned_nolimit(int *stack)
 {
 	ASSERT(sizeof(unsigned) == sizeof(*stack));
-	unsigned sz = *stack;
+	const unsigned sz = *stack;
+	return sz;
+}
+
+static unsigned
+syscall_arg_peek_unsigned(int *stack)
+{
+	unsigned sz = syscall_arg_peek_unsigned_nolimit(stack);
 
 	/* If provided size value looks crazy, clamp to a reasonable range.
 	   Syscalls like read() will then perform short reads instead. */
@@ -111,7 +118,7 @@ static void
 syscall_create(struct intr_frame *f, int *stack)
 {
 	void *filename = syscall_arg_peek(f, stack++, PEEK_CSTRING);
-	const unsigned sz = *stack++;
+	const unsigned sz = syscall_arg_peek_unsigned_nolimit(stack++);
 
 	acquire_io_lock();
 	const bool created = filesys_create(filename, sz);
