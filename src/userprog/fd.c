@@ -18,5 +18,15 @@ struct file *
 fd_to_file(int fd)
 {
 	struct thread *t = thread_current();
-	// TODO
+
+	struct list_elem *e = list_begin(&t->fd_table);
+	for (; e != list_end(&t->fd_table); e = list_next(e)) {
+		struct fdtable_entry *fde =
+			list_entry(e, struct fdtable_entry, elem);
+		if (fd == fde->fd) {
+			return fde->file;
+		}
+	}
+
+	return NULL;
 }

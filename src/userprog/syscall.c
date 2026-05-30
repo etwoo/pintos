@@ -1,6 +1,7 @@
 #include "userprog/syscall.h"
 
 #include "devices/shutdown.h"
+#include "filesys/file.h"
 #include "filesys/filesys.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
@@ -127,7 +128,14 @@ syscall_open(struct intr_frame *f, int *stack)
 static void
 syscall_filesize(struct intr_frame *f, int *stack)
 {
-	// TODO: map fd -> struct file *, then call file_length()
+	const int fd = *stack++;
+
+	struct file *file = fd_to_file(fd);
+	if (file == NULL) {
+		f->eax = FD_INVALID;
+	} else {
+		f->eax = file_length(file);
+	}
 }
 
 static void
