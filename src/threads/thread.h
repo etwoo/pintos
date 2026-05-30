@@ -109,8 +109,6 @@ struct thread {
 	struct fix_t recent_cpu;   /* thread_mlfqs: recent_cpu. */
 	struct list fd_table;      /* userprog: file descriptor table. */
 	int fd_generator;          /* userprog: file descriptor generator. */
-	// TODO: need locking around fd_table read/write access?
-	// TODO: need locking around fd_generator increment?
 	struct {
 		tid_t allowed_parent;
 		struct lock lock;
