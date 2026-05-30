@@ -43,24 +43,24 @@ syscall_arg_peek(struct intr_frame *f, int *stack, enum peek_mode m)
 {
 	uint32_t *pagedir = thread_current()->pagedir;
 
-	const void *filename_uaddr = (void *)(*stack);
-	if (!is_user_vaddr(filename_uaddr)) {
+	const void *uaddr = (void *)(*stack);
+	if (!is_user_vaddr(uaddr)) {
 		thread_exit_invalid_pointer_argument(f);
 	}
 
-	void *filename_paddr = pagedir_get_page(pagedir, filename_uaddr);
-	if (filename_paddr == NULL) {
+	void *kaddr = pagedir_get_page(pagedir, uaddr);
+	if (kaddr == NULL) {
 		thread_exit_invalid_pointer_argument(f);
 	}
 
-	const size_t span = pg_round_up(filename_uaddr) - filename_uaddr;
+	const size_t span = pg_round_up(uaddr) - uaddr;
 	ASSERT(span < PGSIZE);
-	if (PEEK_CSTRING == m && NULL == memchr(filename_paddr, '\0', span)) {
+	if (PEEK_CSTRING == m && NULL == memchr(kaddr, '\0', span)) {
 		/* String parameter lacks null terminator. */
 		thread_exit_invalid_pointer_argument(f);
 	}
 
-	return filename_paddr;
+	return kaddr;
 }
 
 static unsigned
@@ -279,14 +279,17 @@ syscall_close(struct intr_frame *f, int *stack)
 static void
 syscall_handler(struct intr_frame *f)
 {
-	// TODO: validate esp before calling pagedir_get_page
-	int *upage = pagedir_get_page(thread_current()->pagedir, f->esp);
-	ASSERT(upage != NULL); // TODO: error cleanly
-	// printf("got upage %p\n", upage);
+	const void *uaddr = f->esp;
+	if (!is_user_vaddr(uaddr)) {
+		thread_exit_invalid_pointer_argument(f);
+	}
 
-	const int syscall_number = *upage;
-	++upage;
+	int *upage = pagedir_get_page(thread_current()->pagedir, uaddr);
+	if (upage == NULL) {
+		thread_exit_invalid_pointer_argument(f);
+	}
 
+	const int syscall_number = *upage++;
 	switch (syscall_number) {
 	case SYS_HALT:
 		syscall_halt();
@@ -334,10 +337,8 @@ syscall_handler(struct intr_frame *f)
 	case SYS_READDIR:
 	case SYS_ISDIR:
 	case SYS_INUMBER:
-		ASSERT(false); // TODO: error on valid+unimplemented syscalls
-		break;
 	default:
-		ASSERT(false); // TODO: ENOSYS on invalid syscall number
+		f->eax = ENOSYS;
 		break;
 	}
 }
