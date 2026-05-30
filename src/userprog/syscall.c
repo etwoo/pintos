@@ -206,10 +206,6 @@ syscall_write(struct intr_frame *f, int *stack)
 	void *buffer = syscall_arg_peek(f, stack++, PEEK_BUFFER);
 	const unsigned sz = syscall_arg_peek_unsigned(stack++);
 
-	// printf("best-effort buffer_paddr data:\n");
-	// printf("\n");
-	// hex_dump(buffer_uaddr, buffer_paddr, sz, true); // TODO rm hex_dump()
-
 	if (fd == STDOUT_FILENO) {
 		// TODO: if sz>512, call putbuf in chunks (console lock perf)
 		putbuf(buffer, sz);
