@@ -10,6 +10,7 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "userprog/gdt.h"
+#include "userprog/io.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
 
@@ -226,6 +227,8 @@ load(const char *file_name, void (**eip)(void), void **esp, void **kpage)
 		goto done;
 	process_activate();
 
+	acquire_io_lock(); /* Synchronize filesys.h API usage. */
+
 	/* Open executable file. */
 	file = filesys_open(file_name);
 	if (file == NULL) {
@@ -318,6 +321,7 @@ load(const char *file_name, void (**eip)(void), void **esp, void **kpage)
 done:
 	/* We arrive here whether the load is successful or not. */
 	file_close(file);
+	release_io_lock();
 	return success;
 }
 

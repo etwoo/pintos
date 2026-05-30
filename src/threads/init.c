@@ -27,6 +27,7 @@
 #ifdef USERPROG
 #include "userprog/exception.h"
 #include "userprog/gdt.h"
+#include "userprog/io.h"
 #include "userprog/process.h"
 #include "userprog/syscall.h"
 #include "userprog/tss.h"
@@ -114,6 +115,7 @@ main(void)
 	input_init();
 #ifdef USERPROG
 	exception_init();
+	io_init();
 	syscall_init();
 #endif
 
