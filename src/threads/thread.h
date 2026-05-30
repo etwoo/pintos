@@ -146,7 +146,6 @@ struct thread *thread_current(void);
 tid_t thread_tid(void);
 const char *thread_name(void);
 
-int thread_wait(tid_t child);
 void thread_exit(int status) NO_RETURN;
 void thread_yield(void);
 
