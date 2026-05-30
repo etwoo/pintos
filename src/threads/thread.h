@@ -34,6 +34,13 @@ typedef int tid_t;
 #define NICE_DEFAULT 0 /* Default nice. */
 #define NICE_MAX 20    /* Most nice (least selfish). */
 
+/* Thread exec(), wait(), and exit(). */
+struct thread_wait_code {
+	tid_t tid;
+	int code;
+	struct list_elem elem;
+};
+
 /* A kernel thread or user process.
 
    Each thread structure is stored in its own 4 kB page.  The
@@ -164,5 +171,7 @@ int thread_get_load_avg(void);
 
 bool is_thread(struct thread *t);
 struct thread *thread_pop_by_priority(struct list *threads);
+
+void thread_signal_exit(tid_t parent, tid_t child, int child_status);
 
 #endif /* threads/thread.h */

@@ -800,3 +800,48 @@ thread_get_priority_of_mlfqs(struct thread *t)
 	                 : ((priority >= PRI_MAX) ? PRI_MAX : priority));
 	return clamped;
 }
+
+void
+thread_signal_exit(tid_t parent, tid_t child, int child_status)
+{
+	if (parent == TID_ERROR) {
+		return;
+	}
+
+	struct thread *t = NULL;
+	enum intr_level old_level = intr_disable();
+	{
+		struct list_elem *e = list_begin(&all_list);
+		for (; e != list_end(&all_list); e = list_next(e)) {
+			struct thread *candidate =
+				list_entry(e, struct thread, allelem);
+			if (candidate->tid == parent) {
+				t = candidate;
+				break;
+			}
+		}
+	}
+	if (t == NULL) {
+		intr_set_level(old_level);
+		return;
+	}
+
+	/* Acquire thread-level lock, and then restore interrupts. */
+	lock_acquire(&t->wait.lock);
+	intr_set_level(old_level);
+
+	struct list_elem *e = list_begin(&t->wait.children);
+	for (; e != list_end(&t->wait.children); e = list_next(e)) {
+		struct thread_wait_code *twc =
+			list_entry(e, struct thread_wait_code, elem);
+		if (twc->tid == child) {
+			ASSERT(twc->code == EXIT_UNSET);
+			/* Update entry registered by process_execute(). */
+			twc->code = child_status;
+			cond_signal(&t->wait.on_exit, &t->wait.lock);
+			break;
+		}
+	}
+
+	lock_release(&t->wait.lock);
+}

@@ -28,14 +28,6 @@
 static thread_func start_process NO_RETURN;
 static bool prepare_executable_and_arguments(char *, struct intr_frame *);
 
-#define EXIT_UNSET -2
-
-struct thread_wait_code {
-	tid_t tid;
-	int code;
-	struct list_elem elem;
-};
-
 struct start_process_args {
 	char *file_name;
 	struct semaphore child_ready;
@@ -172,41 +164,6 @@ process_wait(tid_t child)
 	return result;
 }
 
-struct thread_status_on_exit_args {
-	tid_t waiter_tid;
-	tid_t exiting_tid;
-	int exiting_code;
-};
-
-// TODO: switch away from thread_foreach() so lock/cvar below work
-static void
-thread_status_on_exit(struct thread *t, void *aux)
-{
-	ASSERT(intr_get_level() == INTR_OFF);
-
-	struct thread_status_on_exit_args *args = aux;
-	if (t->tid == args->waiter_tid) {
-		return;
-	}
-
-	lock_acquire(&t->wait.lock);
-
-	struct list_elem *e = list_begin(&t->wait.children);
-	for (; e != list_end(&t->wait.children); e = list_next(e)) {
-		struct thread_wait_code *twc =
-			list_entry(e, struct thread_wait_code, elem);
-		if (twc->tid == args->exiting_tid) {
-			ASSERT(twc->code == EXIT_UNSET);
-			/* Update entry registered by process_execute(). */
-			twc->code = args->exiting_code;
-			cond_signal(&t->wait.on_exit, &t->wait.lock);
-			break;
-		}
-	}
-
-	lock_release(&t->wait.lock);
-}
-
 /* Free the current process's resources. */
 void
 process_exit(int status)
@@ -246,16 +203,7 @@ process_exit(int status)
 	}
 
 	/* Register status code with our parent, who may wait() on us. */
-	if (cur->wait.allowed_parent != TID_ERROR) {
-		struct thread_status_on_exit_args args = {
-			.waiter_tid = cur->wait.allowed_parent,
-			.exiting_tid = cur->tid,
-			.exiting_code = status,
-		};
-		enum intr_level old_level = intr_disable(); // TODO rm
-		thread_foreach(thread_status_on_exit, &args);
-		intr_set_level(old_level);
-	}
+	thread_signal_exit(cur->wait.allowed_parent, cur->tid, status);
 
 	/* Clear status codes of children that we never wait()-ed on. */
 	lock_acquire(&cur->wait.lock);
