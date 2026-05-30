@@ -279,6 +279,13 @@ syscall_handler(struct intr_frame *f)
 		thread_exit_invalid_pointer_argument(f);
 	}
 
+	if (pg_ofs(uaddr) + 1 >= PGSIZE) {
+		// TODO: generalize fix for sc-boundary-3 to
+		// syscall_arg_peek(), other stack access like syscall_read()
+		// getting fd through incremented upage/stack pointer?
+		thread_exit_invalid_pointer_argument(f);
+	}
+
 	int *upage = pagedir_get_page(thread_current()->pagedir, uaddr);
 	if (upage == NULL) {
 		thread_exit_invalid_pointer_argument(f);
