@@ -110,9 +110,8 @@ syscall_exec(struct intr_frame *f, int *stack)
 static void
 syscall_wait(struct intr_frame *f, int *stack)
 {
-	(void)f;       // TODO rm
-	(void)stack;   // TODO rm
-	ASSERT(false); // TODO wait()
+	const int pid = *stack++; /* Assumes sizeof(pid_t) == sizeof(int). */
+	f->eax = process_wait(pid);
 }
 
 static void
