@@ -88,9 +88,11 @@ syscall_create(struct intr_frame *f, long *stack)
 {
 	void *filename = syscall_arg_peek_as_cstring(f, stack++);
 	const unsigned sz = *stack++;
+
 	acquire_io_lock();
 	const bool created = filesys_create(filename, sz);
 	release_io_lock();
+
 	f->eax = created ? 1 : 0; /* create() returns bool, not integer code */
 }
 
@@ -98,9 +100,11 @@ static void
 syscall_remove(struct intr_frame *f, long *stack)
 {
 	void *filename = syscall_arg_peek_as_cstring(f, stack++);
+
 	acquire_io_lock();
 	const bool removed = filesys_remove(filename);
 	release_io_lock();
+
 	f->eax = removed ? 1 : 0; /* remove() returns bool, not integer code */
 }
 
@@ -108,9 +112,11 @@ static void
 syscall_open(struct intr_frame *f, long *stack)
 {
 	void *filename = syscall_arg_peek_as_cstring(f, stack++);
+
 	acquire_io_lock();
 	struct file *fh = filesys_open(filename);
 	release_io_lock();
+
 	if (fh == NULL) {
 		f->eax = FD_INVALID;
 	} else {

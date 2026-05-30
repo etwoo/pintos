@@ -12,5 +12,6 @@ struct fdtable_entry {
 };
 
 int fd_create(struct file *file);
+struct file *fd_to_file(int fd);
 
 #endif

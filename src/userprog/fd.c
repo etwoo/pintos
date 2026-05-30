@@ -13,3 +13,10 @@ fd_create(struct file *file)
 	list_push_back(&t->fd_table, &fde->elem);
 	return fde->fd;
 }
+
+struct file *
+fd_to_file(int fd)
+{
+	struct thread *t = thread_current();
+	// TODO
+}
