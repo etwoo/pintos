@@ -1,5 +1,6 @@
 #include "userprog/syscall.h"
 
+#include "devices/input.h"
 #include "devices/shutdown.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
@@ -13,6 +14,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <syscall-nr.h>
+
+#define IO_READ_ERROR -1 /* Conceptually distinct from FD_INVALID. */
 
 static void syscall_handler(struct intr_frame *);
 
@@ -29,8 +32,13 @@ thread_exit_invalid_pointer_argument(struct intr_frame *f)
 	thread_exit();
 }
 
+enum peek_mode {
+	PEEK_CSTRING,
+	PEEK_BUFFER,
+};
+
 static void *
-syscall_arg_peek_as_cstring(struct intr_frame *f, int *stack)
+syscall_arg_peek(struct intr_frame *f, int *stack, enum peek_mode m)
 {
 	uint32_t *pagedir = thread_current()->pagedir;
 
@@ -46,12 +54,27 @@ syscall_arg_peek_as_cstring(struct intr_frame *f, int *stack)
 
 	const size_t span = pg_round_up(filename_uaddr) - filename_uaddr;
 	ASSERT(span < PGSIZE);
-	if (NULL == memchr(filename_paddr, '\0', span)) {
+	if (PEEK_CSTRING == m && NULL == memchr(filename_paddr, '\0', span)) {
 		/* String parameter lacks null terminator. */
 		thread_exit_invalid_pointer_argument(f);
 	}
 
 	return filename_paddr;
+}
+
+static unsigned
+syscall_arg_peek_unsigned(int *stack)
+{
+	ASSERT(sizeof(unsigned) == sizeof(*stack));
+	unsigned sz = *stack;
+
+	/* If provided size value looks crazy, clamp to a reasonable range.
+	   Syscalls like read() will then perform short reads instead. */
+	if (sz > PGSIZE) {
+		sz = PGSIZE;
+	}
+
+	return sz;
 }
 
 static void NO_RETURN
@@ -87,7 +110,7 @@ syscall_wait(struct intr_frame *f, int *stack)
 static void
 syscall_create(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek_as_cstring(f, stack++);
+	void *filename = syscall_arg_peek(f, stack++, PEEK_CSTRING);
 	const unsigned sz = *stack++;
 
 	acquire_io_lock();
@@ -100,7 +123,7 @@ syscall_create(struct intr_frame *f, int *stack)
 static void
 syscall_remove(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek_as_cstring(f, stack++);
+	void *filename = syscall_arg_peek(f, stack++, PEEK_CSTRING);
 
 	acquire_io_lock();
 	const bool removed = filesys_remove(filename);
@@ -112,7 +135,7 @@ syscall_remove(struct intr_frame *f, int *stack)
 static void
 syscall_open(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek_as_cstring(f, stack++);
+	void *filename = syscall_arg_peek(f, stack++, PEEK_CSTRING);
 
 	acquire_io_lock();
 	struct file *fh = filesys_open(filename);
@@ -141,7 +164,21 @@ syscall_filesize(struct intr_frame *f, int *stack)
 static void
 syscall_read(struct intr_frame *f, int *stack)
 {
-	// TODO: map fd -> struct file *, then call file_read()
+	const int fd = *stack++;
+	void *buffer = syscall_arg_peek(f, stack++, PEEK_BUFFER);
+	const unsigned sz = syscall_arg_peek_unsigned(stack++);
+
+	if (fd == STDIN_FILENO) {
+		input_getc();
+		return;
+	}
+
+	struct file *file = fd_to_file(fd);
+	if (file == NULL) {
+		f->eax = IO_READ_ERROR;
+	} else {
+		f->eax = file_read(file, buffer, sz);
+	}
 }
 
 static void
@@ -164,8 +201,7 @@ syscall_write(struct intr_frame *f, int *stack)
 
 	++stack;
 
-	const unsigned sz = *stack; // TODO: clamp buffer size?
-	ASSERT(sizeof(unsigned) == sizeof(*stack));
+	const unsigned sz = syscall_arg_peek_unsigned(stack++);
 	// printf("got size %ld\n", sz);
 
 	// printf("best-effort buffer_paddr data:\n");
