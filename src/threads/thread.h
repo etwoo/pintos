@@ -95,6 +95,8 @@ struct thread {
 	struct thread *donate[8];  /* Priority donation. */
 	int nice;                  /* thread_mlfqs: niceness. */
 	struct fix_t recent_cpu;   /* thread_mlfqs: recent_cpu. */
+	struct list fd_table;      /* userprog: file descriptor table. */
+	int fd_generator;          /* userprog: file descriptor generator. */
 	struct list_elem allelem;  /* List element for all threads list. */
 
 	/* Shared between thread.c and synch.c. */

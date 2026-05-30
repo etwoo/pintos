@@ -556,6 +556,8 @@ init_thread(struct thread *t, const char *name, int priority)
 	}
 	t->nice = NICE_DEFAULT;
 	t->recent_cpu = i32_to_fixed(0);
+	list_init(&t->fd_table);
+	t->fd_generator = STDERR_FILENO + 1; /* first available fd value */
 	t->magic = THREAD_MAGIC;
 
 	old_level = intr_disable();

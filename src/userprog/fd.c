@@ -1,10 +1,15 @@
 #include "userprog/fd.h"
 
-// TODO: skip STDIN_FILENO, STDOUT_FILENO (no stderr in pintos)
-// TODO: register fd->fh mapping, hashtable?
+#include "threads/malloc.h"
+#include "threads/thread.h"
+
 int
 fd_create(struct file *file)
 {
-	// use per-thread mapping + per-thread lock for mapping?
-	return FD_INVALID;
+	struct thread *t = thread_current();
+	struct fdtable_entry *fde = malloc(sizeof(*fde));
+	fde->fd = t->fd_generator++;
+	fde->file = file;
+	list_push_back(&t->fd_table, &fde->elem);
+	return fde->fd;
 }
