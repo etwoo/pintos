@@ -164,7 +164,9 @@ syscall_filesize(struct intr_frame *f, int *stack)
 	if (file == NULL) {
 		f->eax = FD_INVALID;
 	} else {
+		acquire_io_lock();
 		f->eax = file_length(file);
+		release_io_lock();
 	}
 }
 
@@ -190,45 +192,38 @@ syscall_read(struct intr_frame *f, int *stack)
 	if (file == NULL) {
 		f->eax = IO_READ_ERROR;
 	} else {
+		acquire_io_lock();
 		f->eax = file_read(file, buffer, sz);
+		release_io_lock();
 	}
 }
 
 static void
 syscall_write(struct intr_frame *f, int *stack)
 {
-	const int fd = *stack;
-	// printf("got fd %ld\n", fd);
-	ASSERT(fd == STDOUT_FILENO); // TODO validate fd
-
-	++stack;
-
-	const uintptr_t buffer_uaddr = *stack;
-	ASSERT(sizeof(uintptr_t) == sizeof(*stack));
-	// printf("got buffer_uaddr %p\n", (void *)buffer_uaddr);
-
-	// TODO: validate buffer_uaddr before calling pagedir_get_page
-	void *buffer_paddr = pagedir_get_page(thread_current()->pagedir,
-	                                      (void *)buffer_uaddr);
-	// printf("got buffer_paddr %p\n", (void *)buffer_paddr);
-
-	++stack;
-
+	const int fd = *stack++;
+	void *buffer = syscall_arg_peek(f, stack++, PEEK_BUFFER);
 	const unsigned sz = syscall_arg_peek_unsigned(stack++);
-	// printf("got size %ld\n", sz);
 
 	// printf("best-effort buffer_paddr data:\n");
 	// printf("\n");
 	// hex_dump(buffer_uaddr, buffer_paddr, sz, true); // TODO rm hex_dump()
-	// hex_dump(0, buffer_paddr, sz, true); // TODO rm hex_dump()
 
-	// TODO: handle write() more generally
-	// TODO: if sz>512, call putbuf() on chunks, avoid holding console_lock
-	// for too long at once
-	putbuf(buffer_paddr, sz);
-	/* No buffered I/O, hence no need to copy to a bounce buffer. */
+	if (fd == STDOUT_FILENO) {
+		// TODO: if sz>512, call putbuf in chunks (console lock perf)
+		putbuf(buffer, sz);
+		f->eax = sz;
+		return;
+	}
 
-	f->eax = 0; // TODO: set meaningful return value
+	struct file *file = fd_to_file(fd);
+	if (file == NULL) {
+		f->eax = IO_READ_ERROR;
+	} else {
+		acquire_io_lock();
+		f->eax = file_write(file, buffer, sz);
+		release_io_lock();
+	}
 }
 
 static void
