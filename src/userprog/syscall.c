@@ -29,7 +29,7 @@ thread_exit_invalid_pointer_argument(struct intr_frame *f)
 }
 
 static void *
-syscall_arg_peek_as_cstring(struct intr_frame *f, long *stack)
+syscall_arg_peek_as_cstring(struct intr_frame *f, int *stack)
 {
 	uint32_t *pagedir = thread_current()->pagedir;
 
@@ -60,15 +60,15 @@ syscall_halt(void)
 }
 
 static void NO_RETURN
-syscall_exit(struct intr_frame *f, long *stack)
+syscall_exit(struct intr_frame *f, int *stack)
 {
-	const long status = *stack;
+	const int status = *stack;
 	f->eax = status;
 	thread_exit();
 }
 
 static void
-syscall_exec(struct intr_frame *f, long *stack)
+syscall_exec(struct intr_frame *f, int *stack)
 {
 	(void)f;       // TODO rm
 	(void)stack;   // TODO rm
@@ -76,7 +76,7 @@ syscall_exec(struct intr_frame *f, long *stack)
 }
 
 static void
-syscall_wait(struct intr_frame *f, long *stack)
+syscall_wait(struct intr_frame *f, int *stack)
 {
 	(void)f;       // TODO rm
 	(void)stack;   // TODO rm
@@ -84,7 +84,7 @@ syscall_wait(struct intr_frame *f, long *stack)
 }
 
 static void
-syscall_create(struct intr_frame *f, long *stack)
+syscall_create(struct intr_frame *f, int *stack)
 {
 	void *filename = syscall_arg_peek_as_cstring(f, stack++);
 	const unsigned sz = *stack++;
@@ -97,7 +97,7 @@ syscall_create(struct intr_frame *f, long *stack)
 }
 
 static void
-syscall_remove(struct intr_frame *f, long *stack)
+syscall_remove(struct intr_frame *f, int *stack)
 {
 	void *filename = syscall_arg_peek_as_cstring(f, stack++);
 
@@ -109,7 +109,7 @@ syscall_remove(struct intr_frame *f, long *stack)
 }
 
 static void
-syscall_open(struct intr_frame *f, long *stack)
+syscall_open(struct intr_frame *f, int *stack)
 {
 	void *filename = syscall_arg_peek_as_cstring(f, stack++);
 
@@ -125,27 +125,28 @@ syscall_open(struct intr_frame *f, long *stack)
 }
 
 static void
-syscall_filesize(struct intr_frame *f, long *stack)
+syscall_filesize(struct intr_frame *f, int *stack)
 {
 	// TODO: map fd -> struct file *, then call file_length()
 }
 
 static void
-syscall_read(struct intr_frame *f, long *stack)
+syscall_read(struct intr_frame *f, int *stack)
 {
 	// TODO: map fd -> struct file *, then call file_read()
 }
 
 static void
-syscall_write(struct intr_frame *f, long *stack)
+syscall_write(struct intr_frame *f, int *stack)
 {
-	const long fd = *stack;
+	const int fd = *stack;
 	// printf("got fd %ld\n", fd);
 	ASSERT(fd == STDOUT_FILENO); // TODO validate fd
 
 	++stack;
 
 	const uintptr_t buffer_uaddr = *stack;
+	ASSERT(sizeof(uintptr_t) == sizeof(*stack));
 	// printf("got buffer_uaddr %p\n", (void *)buffer_uaddr);
 
 	// TODO: validate buffer_uaddr before calling pagedir_get_page
@@ -155,7 +156,8 @@ syscall_write(struct intr_frame *f, long *stack)
 
 	++stack;
 
-	const long sz = *stack; // TODO: clamp buffer size?
+	const unsigned sz = *stack; // TODO: clamp buffer size?
+	ASSERT(sizeof(unsigned) == sizeof(*stack));
 	// printf("got size %ld\n", sz);
 
 	// printf("best-effort buffer_paddr data:\n");
@@ -173,19 +175,19 @@ syscall_write(struct intr_frame *f, long *stack)
 }
 
 static void
-syscall_seek(struct intr_frame *f, long *stack)
+syscall_seek(struct intr_frame *f, int *stack)
 {
 	// TODO: map fd -> struct file *, then call file_seek()
 }
 
 static void
-syscall_tell(struct intr_frame *f, long *stack)
+syscall_tell(struct intr_frame *f, int *stack)
 {
 	// TODO: map fd -> struct file *, then call file_tell()
 }
 
 static void
-syscall_close(struct intr_frame *f, long *stack)
+syscall_close(struct intr_frame *f, int *stack)
 {
 	// TODO: map fd -> struct file *, then call file_close()
 	// TODO: clear fd -> struct file * mapping after file_close deallocates
@@ -195,11 +197,11 @@ static void
 syscall_handler(struct intr_frame *f)
 {
 	// TODO: validate esp before calling pagedir_get_page
-	long *upage = pagedir_get_page(thread_current()->pagedir, f->esp);
+	int *upage = pagedir_get_page(thread_current()->pagedir, f->esp);
 	ASSERT(upage != NULL); // TODO: error cleanly
 	// printf("got upage %p\n", upage);
 
-	const long syscall_number = *upage;
+	const int syscall_number = *upage;
 	++upage;
 
 	switch (syscall_number) {
