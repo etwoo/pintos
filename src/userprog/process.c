@@ -6,9 +6,11 @@
 #include "threads/flags.h"
 #include "threads/init.h"
 #include "threads/interrupt.h"
+#include "threads/malloc.h"
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "userprog/fd.h"
 #include "userprog/gdt.h"
 #include "userprog/io.h"
 #include "userprog/pagedir.h"
@@ -120,7 +122,20 @@ process_exit(void)
 		pagedir_destroy(pd);
 	}
 
-	// TODO: close outstanding file descriptors in cur->fd_table
+	/* Close outstanding file descriptors. */
+	while (!list_empty(&cur->fd_table)) {
+		struct list_elem *e = list_pop_front(&cur->fd_table);
+		struct fdtable_entry *fde =
+			list_entry(e, struct fdtable_entry, elem);
+
+		struct file *file = fde->file; /* Copy out before free(fde). */
+		free(fde);
+		fde = NULL;
+
+		acquire_io_lock();
+		file_close(file);
+		release_io_lock();
+	}
 }
 
 /* Sets up the CPU for running user code in the current

@@ -24,7 +24,8 @@ fd_unregister(int fd)
 		struct fdtable_entry *fde =
 			list_entry(e, struct fdtable_entry, elem);
 		if (fd == fde->fd) {
-			list_remove(e);
+			list_remove(&fde->elem);
+			free(fde);
 			break;
 		}
 	}
