@@ -279,6 +279,11 @@ syscall_handler(struct intr_frame *f)
 		thread_exit_invalid_pointer_argument(f);
 	}
 
+	if (!is_user_vaddr(uaddr + sizeof(int))) {
+		// TODO: generalize fix for sc-bad-arg
+		thread_exit_invalid_pointer_argument(f);
+	}
+
 	if (pg_ofs(uaddr) + 1 >= PGSIZE) {
 		// TODO: generalize fix for sc-boundary-3 to
 		// syscall_arg_peek(), other stack access like syscall_read()
