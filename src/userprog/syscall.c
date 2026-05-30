@@ -15,7 +15,7 @@
 #include <string.h>
 #include <syscall-nr.h>
 
-#define IO_READ_ERROR -1 /* Conceptually distinct from FD_INVALID. */
+#define IO_ERROR -1 /* Conceptually distinct from FD_INVALID. */
 
 static void syscall_handler(struct intr_frame *);
 
@@ -179,7 +179,7 @@ syscall_read(struct intr_frame *f, int *stack)
 
 	if (fd == STDIN_FILENO) {
 		if (sz == 0) {
-			f->eax = IO_READ_ERROR;
+			f->eax = IO_ERROR;
 		} else {
 			uint8_t *p = buffer;
 			*p = input_getc();
@@ -190,7 +190,7 @@ syscall_read(struct intr_frame *f, int *stack)
 
 	struct file *file = fd_to_file(fd);
 	if (file == NULL) {
-		f->eax = IO_READ_ERROR;
+		f->eax = IO_ERROR;
 	} else {
 		acquire_io_lock();
 		f->eax = file_read(file, buffer, sz);
@@ -218,7 +218,7 @@ syscall_write(struct intr_frame *f, int *stack)
 
 	struct file *file = fd_to_file(fd);
 	if (file == NULL) {
-		f->eax = IO_READ_ERROR;
+		f->eax = IO_ERROR;
 	} else {
 		acquire_io_lock();
 		f->eax = file_write(file, buffer, sz);
@@ -229,7 +229,18 @@ syscall_write(struct intr_frame *f, int *stack)
 static void
 syscall_seek(struct intr_frame *f, int *stack)
 {
-	// TODO: map fd -> struct file *, then call file_seek()
+	const int fd = *stack++;
+	const unsigned sz = syscall_arg_peek_unsigned(stack++);
+
+	struct file *file = fd_to_file(fd);
+	if (file == NULL) {
+		f->eax = IO_ERROR;
+	} else {
+		acquire_io_lock();
+		file_seek(file, sz);
+		release_io_lock();
+		f->eax = 0;
+	}
 }
 
 static void
