@@ -192,7 +192,9 @@ process_wait(tid_t child_tid)
 		.target_tid = child_tid,
 		.target_code = EXIT_UNSET,
 	};
+	enum intr_level old_level = intr_disable(); // TODO rm
 	thread_foreach(thread_match_and_wait, &args);
+	intr_set_level(old_level);
 
 	return args.target_code;
 }
@@ -275,7 +277,9 @@ process_exit(int status)
 			.exiting_tid = cur->tid,
 			.exiting_code = status,
 		};
+		enum intr_level old_level = intr_disable(); // TODO rm
 		thread_foreach(thread_status_on_exit, &args);
+		intr_set_level(old_level);
 	}
 
 	/* Clear status codes of children that we never wait()-ed on. */

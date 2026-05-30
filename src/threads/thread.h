@@ -21,6 +21,9 @@ enum thread_status {
 typedef int tid_t;
 #define TID_ERROR ((tid_t) - 1) /* Error value for tid_t. */
 
+#define EXIT_EXCEPTION -1 /* Terminated by kernel, killed by exception. */
+#define EXIT_UNSET -2     /* Status code not yet known. */
+
 /* Thread priorities. */
 #define PRI_MIN 0      /* Lowest priority. */
 #define PRI_DEFAULT 31 /* Default priority. */
@@ -97,10 +100,10 @@ struct thread {
 	struct thread *donate[8];  /* Priority donation. */
 	int nice;                  /* thread_mlfqs: niceness. */
 	struct fix_t recent_cpu;   /* thread_mlfqs: recent_cpu. */
+	struct list fd_table;      /* userprog: file descriptor table. */
+	int fd_generator;          /* userprog: file descriptor generator. */
 	// TODO: need locking around fd_table read/write access?
-	struct list fd_table; /* userprog: file descriptor table. */
 	// TODO: need locking around fd_generator increment?
-	int fd_generator;     /* userprog: file descriptor generator. */
 	struct {
 		tid_t allowed_parent;
 		struct lock lock;
@@ -143,9 +146,8 @@ struct thread *thread_current(void);
 tid_t thread_tid(void);
 const char *thread_name(void);
 
-#define EXIT_EXCEPTION -1 /* Terminated by kernel, killed by exception. */
+int thread_wait(tid_t child);
 void thread_exit(int status) NO_RETURN;
-
 void thread_yield(void);
 
 /* Performs some operation on thread t, given auxiliary data AUX. */
