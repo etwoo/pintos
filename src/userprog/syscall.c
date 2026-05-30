@@ -272,31 +272,30 @@ syscall_close(struct intr_frame *f, int *stack)
 }
 
 static void
+check_span_is_user_vaddr(struct intr_frame *f, const void *uaddr, unsigned sz)
+{
+	if (!is_user_vaddr(uaddr) ||        /* Obviously out-of-bounds.   */
+	    !is_user_vaddr(uaddr + sz) ||   /* See test: sc-bad-arg.c     */
+	    pg_ofs(uaddr) + sz >= PGSIZE) { /* See test: sc-boundary-3.c  */
+		thread_exit_invalid_pointer_argument(f);
+	}
+}
+
+static void
 syscall_handler(struct intr_frame *f)
 {
 	const void *uaddr = f->esp;
-	if (!is_user_vaddr(uaddr)) {
-		thread_exit_invalid_pointer_argument(f);
-	}
+	int syscall_number = SYS_EXIT;
 
-	if (!is_user_vaddr(uaddr + sizeof(int))) {
-		// TODO: generalize fix for sc-bad-arg
-		thread_exit_invalid_pointer_argument(f);
-	}
-
-	if (pg_ofs(uaddr) + 1 >= PGSIZE) {
-		// TODO: generalize fix for sc-boundary-3 to
-		// syscall_arg_peek(), other stack access like syscall_read()
-		// getting fd through incremented upage/stack pointer?
-		thread_exit_invalid_pointer_argument(f);
-	}
+	check_span_is_user_vaddr(f, uaddr, sizeof(syscall_number));
 
 	int *upage = pagedir_get_page(thread_current()->pagedir, uaddr);
 	if (upage == NULL) {
 		thread_exit_invalid_pointer_argument(f);
 	}
 
-	const int syscall_number = *upage++;
+	syscall_number = *upage++;
+
 	switch (syscall_number) {
 	case SYS_HALT:
 		syscall_halt();
