@@ -246,7 +246,16 @@ syscall_seek(struct intr_frame *f, int *stack)
 static void
 syscall_tell(struct intr_frame *f, int *stack)
 {
-	// TODO: map fd -> struct file *, then call file_tell()
+	const int fd = *stack++;
+
+	struct file *file = fd_to_file(fd);
+	if (file == NULL) {
+		f->eax = IO_ERROR;
+	} else {
+		acquire_io_lock();
+		f->eax = file_tell(file);
+		release_io_lock();
+	}
 }
 
 static void
