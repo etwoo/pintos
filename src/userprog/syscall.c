@@ -31,7 +31,7 @@ static void NO_RETURN
 thread_exit_invalid_pointer_argument(struct intr_frame *f)
 {
 	f->eax = EINVAL;
-	thread_exit();
+	thread_exit(EXIT_EXCEPTION);
 }
 
 enum peek_mode {
@@ -97,7 +97,7 @@ syscall_exit(struct intr_frame *f, int *stack)
 {
 	const int status = *stack;
 	f->eax = status;
-	thread_exit();
+	thread_exit(status);
 }
 
 static void

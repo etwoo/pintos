@@ -28,6 +28,14 @@
 static thread_func start_process NO_RETURN;
 static bool prepare_executable_and_arguments(char *, struct intr_frame *);
 
+#define EXIT_UNSET -2
+
+struct thread_wait_code {
+	tid_t tid;
+	int code;
+	struct list_elem elem;
+};
+
 struct start_process_args {
 	char *file_name;
 	struct semaphore child_ready;
@@ -64,6 +72,17 @@ process_execute(const char *file_name)
 		sema_down(&spa.child_ready);
 	}
 
+	if (spa.child_tid != TID_ERROR) {
+		/* On successful load(), register child_tid with parent. */
+		struct thread_wait_code *twc = malloc(sizeof(*twc));
+		twc->tid = spa.child_tid;
+		twc->code = EXIT_UNSET; /* Will update in process_exit(). */
+		struct thread *parent = thread_current();
+		lock_acquire(&parent->wait.lock);
+		list_push_back(&parent->wait.children, &twc->elem);
+		lock_release(&parent->wait.lock);
+	}
+
 	ASSERT(spa.child_tid == tentative_tid || spa.child_tid == TID_ERROR);
 	return spa.child_tid;
 }
@@ -89,14 +108,14 @@ start_process(void *args_)
 		/* On successful load(), take str ownership. */
 		palloc_free_page(file_name);
 		/* Switch placeholder TID_ERROR to real tid_t value. */
-		args->child_tid = thread_current()->tid;
+		args->child_tid = thread_tid();
 	}
 
 	/* Signal completed load() and ready-to-read tid_t value. */
 	sema_up(&args->child_ready);
 
 	if (!success) {
-		thread_exit(); /* If load failed, quit. */
+		thread_exit(EXIT_EXCEPTION); /* If load failed, quit. */
 	}
 
 	/* Start the user process by simulating a return from an
@@ -107,6 +126,49 @@ start_process(void *args_)
 	   and jump to it. */
 	asm volatile("movl %0, %%esp; jmp intr_exit" : : "g"(&if_) : "memory");
 	NOT_REACHED();
+}
+
+struct thread_match_and_wait_args {
+	tid_t waiter_tid;
+	tid_t target_tid;
+	int target_code;
+};
+
+// TODO: switch away from thread_foreach() so lock/cvar below work
+static void
+thread_match_and_wait(struct thread *t, void *aux)
+{
+	struct thread_match_and_wait_args *args = aux;
+	if (t->tid == args->waiter_tid) {
+		return;
+	}
+
+	while (true) {
+		struct thread_wait_code *got_match = NULL;
+
+		lock_acquire(&t->wait.lock);
+
+		struct list_elem *e = list_begin(&t->wait.children);
+		for (; e != list_end(&t->wait.children); e = list_next(e)) {
+			struct thread_wait_code *twc =
+				list_entry(e, struct thread_wait_code, elem);
+			if (twc->tid == args->target_tid &&
+			    twc->code != EXIT_UNSET) {
+				got_match = twc;
+				break;
+			}
+		}
+
+		if (got_match != NULL) {
+			args->target_code = got_match->code;
+			list_remove(&got_match->elem);
+			free(got_match);
+			lock_release(&t->wait.lock);
+			break;
+		}
+
+		cond_wait(&t->wait.on_exit, &t->wait.lock);
+	}
 }
 
 /* Waits for thread TID to die and returns its exit status.  If
@@ -124,14 +186,53 @@ process_wait(tid_t child_tid)
 	if (child_tid == TID_ERROR) {
 		return TID_ERROR;
 	}
-	while (true) { // TODO: process_wait()
+
+	struct thread_match_and_wait_args args = {
+		.waiter_tid = thread_tid(),
+		.target_tid = child_tid,
+		.target_code = EXIT_UNSET,
+	};
+	thread_foreach(thread_match_and_wait, &args);
+
+	return args.target_code;
+}
+
+struct thread_status_on_exit_args {
+	tid_t waiter_tid;
+	tid_t exiting_tid;
+	int exiting_code;
+};
+
+// TODO: switch away from thread_foreach() so lock/cvar below work
+static void
+thread_status_on_exit(struct thread *t, void *aux)
+{
+	struct thread_status_on_exit_args *args = aux;
+	if (t->tid == args->waiter_tid) {
+		return;
 	}
-	NOT_REACHED();
+
+	lock_acquire(&t->wait.lock);
+
+	struct list_elem *e = list_begin(&t->wait.children);
+	for (; e != list_end(&t->wait.children); e = list_next(e)) {
+		struct thread_wait_code *twc =
+			list_entry(e, struct thread_wait_code, elem);
+		if (twc->tid == args->exiting_tid) {
+			ASSERT(twc->code == EXIT_UNSET);
+			/* Update entry registered by process_execute(). */
+			twc->code = args->exiting_code;
+			cond_signal(&t->wait.on_exit, &t->wait.lock);
+			break;
+		}
+	}
+
+	lock_release(&t->wait.lock);
 }
 
 /* Free the current process's resources. */
 void
-process_exit(void)
+process_exit(int status)
 {
 	struct thread *cur = thread_current();
 	uint32_t *pd;
@@ -166,6 +267,26 @@ process_exit(void)
 		file_close(file);
 		release_io_lock();
 	}
+
+	/* Register status code with our parent, who may wait() on us. */
+	if (cur->wait.allowed_parent != TID_ERROR) {
+		struct thread_status_on_exit_args args = {
+			.waiter_tid = cur->wait.allowed_parent,
+			.exiting_tid = cur->tid,
+			.exiting_code = status,
+		};
+		thread_foreach(thread_status_on_exit, &args);
+	}
+
+	/* Clear status codes of children that we never wait()-ed on. */
+	lock_acquire(&cur->wait.lock);
+	while (!list_empty(&cur->wait.children)) {
+		struct list_elem *e = list_pop_front(&cur->wait.children);
+		struct thread_wait_code *twc =
+			list_entry(e, struct thread_wait_code, elem);
+		free(twc);
+	}
+	lock_release(&cur->wait.lock);
 }
 
 /* Sets up the CPU for running user code in the current

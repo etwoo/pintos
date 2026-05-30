@@ -203,6 +203,7 @@ thread_create(const char *name, int priority, thread_func *function, void *aux)
 	/* Initialize thread. */
 	init_thread(t, name, priority);
 	tid = t->tid = allocate_tid();
+	t->wait.allowed_parent = thread_tid();
 
 	/* Stack frame for kernel_thread(). */
 	kf = alloc_frame(t, sizeof *kf);
@@ -313,12 +314,12 @@ recall_donation_from_dying_thread(struct thread *t, void *aux)
 /* Deschedules the current thread and destroys it.  Never
    returns to the caller. */
 void
-thread_exit(void)
+thread_exit(int status)
 {
 	ASSERT(!intr_context());
 
 #ifdef USERPROG
-	process_exit();
+	process_exit(status);
 #endif
 
 	/* Remove thread from all threads list, set our status to dying,
@@ -508,7 +509,8 @@ kernel_thread(thread_func *function, void *aux)
 
 	intr_enable(); /* The scheduler runs with interrupts off. */
 	function(aux); /* Execute the thread function. */
-	thread_exit(); /* If function() returns, kill the thread. */
+
+	thread_exit(0); /* If function() returns, kill the thread. */
 }
 
 /* Returns the running thread. */
@@ -558,6 +560,10 @@ init_thread(struct thread *t, const char *name, int priority)
 	t->recent_cpu = i32_to_fixed(0);
 	list_init(&t->fd_table);
 	t->fd_generator = STDERR_FILENO + 1; /* first available fd value */
+	t->wait.allowed_parent = TID_ERROR;
+	lock_init(&t->wait.lock);
+	cond_init(&t->wait.on_exit);
+	list_init(&t->wait.children);
 	t->magic = THREAD_MAGIC;
 
 	old_level = intr_disable();
