@@ -176,7 +176,13 @@ syscall_read(struct intr_frame *f, int *stack)
 	const unsigned sz = syscall_arg_peek_unsigned(stack++);
 
 	if (fd == STDIN_FILENO) {
-		input_getc();
+		if (sz == 0) {
+			f->eax = IO_READ_ERROR;
+		} else {
+			uint8_t *p = buffer;
+			*p = input_getc();
+			f->eax = 1;
+		}
 		return;
 	}
 
