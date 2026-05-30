@@ -8,6 +8,7 @@
 #include "threads/interrupt.h"
 #include "threads/malloc.h"
 #include "threads/palloc.h"
+#include "threads/synch.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "userprog/fd.h"
@@ -27,6 +28,12 @@
 static thread_func start_process NO_RETURN;
 static bool prepare_executable_and_arguments(char *, struct intr_frame *);
 
+struct start_process_args {
+	char *file_name;
+	struct semaphore child_ready;
+	tid_t child_tid;
+};
+
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
@@ -34,31 +41,42 @@ static bool prepare_executable_and_arguments(char *, struct intr_frame *);
 tid_t
 process_execute(const char *file_name)
 {
-	char *fn_copy;
-	tid_t tid;
+	struct start_process_args spa = {0};
+	sema_init(&spa.child_ready, 0);
+	spa.child_tid = TID_ERROR;
 
 	/* Make a copy of FILE_NAME.
 	   Otherwise there's a race between the caller and load(). */
-	fn_copy = palloc_get_page(0);
-	if (fn_copy == NULL)
-		return TID_ERROR;
-	strlcpy(fn_copy, file_name, PGSIZE);
+	spa.file_name = palloc_get_page(0);
+	if (spa.file_name == NULL) {
+		return spa.child_tid;
+	}
+	strlcpy(spa.file_name, file_name, PGSIZE);
 
 	/* Create a new thread to execute FILE_NAME. */
-	tid = thread_create(file_name, PRI_DEFAULT, start_process, fn_copy);
-	if (tid == TID_ERROR)
-		palloc_free_page(fn_copy);
-	return tid;
+	const tid_t tentative_tid =
+		thread_create(spa.file_name, PRI_DEFAULT, start_process, &spa);
+	if (tentative_tid == TID_ERROR) {
+		/* On fail-fast, retain str ownership. */
+		palloc_free_page(spa.file_name);
+	} else {
+		/* Thread started. Now wait for load() in thread_func. */
+		sema_down(&spa.child_ready);
+	}
+
+	ASSERT(spa.child_tid == tentative_tid || spa.child_tid == TID_ERROR);
+	return spa.child_tid;
 }
 
 /* A thread function that loads a user process and starts it
    running. */
 static void
-start_process(void *file_name_)
+start_process(void *args_)
 {
-	char *file_name = file_name_;
-	struct intr_frame if_;
-	bool success;
+	struct start_process_args *args = args_;
+	char *file_name = args->file_name;
+	struct intr_frame if_ = {0};
+	bool success = false;
 
 	/* Initialize interrupt frame and load executable. */
 	memset(&if_, 0, sizeof if_);
@@ -67,10 +85,19 @@ start_process(void *file_name_)
 	if_.eflags = FLAG_IF | FLAG_MBS;
 	success = prepare_executable_and_arguments(file_name, &if_);
 
-	/* If load failed, quit. */
-	palloc_free_page(file_name);
-	if (!success)
-		thread_exit();
+	if (success) {
+		/* On successful load(), take str ownership. */
+		palloc_free_page(file_name);
+		/* Switch placeholder TID_ERROR to real tid_t value. */
+		args->child_tid = thread_current()->tid;
+	}
+
+	/* Signal completed load() and ready-to-read tid_t value. */
+	sema_up(&args->child_ready);
+
+	if (!success) {
+		thread_exit(); /* If load failed, quit. */
+	}
 
 	/* Start the user process by simulating a return from an
 	   interrupt, implemented by intr_exit (in
@@ -92,8 +119,11 @@ start_process(void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait(tid_t child_tid UNUSED)
+process_wait(tid_t child_tid)
 {
+	if (child_tid == TID_ERROR) {
+		return TID_ERROR;
+	}
 	while (true) { // TODO: process_wait()
 	}
 	NOT_REACHED();

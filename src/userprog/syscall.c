@@ -10,6 +10,7 @@
 #include "userprog/fd.h"
 #include "userprog/io.h"
 #include "userprog/pagedir.h"
+#include "userprog/process.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -102,9 +103,8 @@ syscall_exit(struct intr_frame *f, int *stack)
 static void
 syscall_exec(struct intr_frame *f, int *stack)
 {
-	(void)f;       // TODO rm
-	(void)stack;   // TODO rm
-	ASSERT(false); // TODO exec()
+	void *filename = syscall_arg_peek(f, stack++, PEEK_CSTRING);
+	f->eax = process_execute(filename);
 }
 
 static void
