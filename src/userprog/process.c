@@ -603,17 +603,17 @@ struct stack_layout {
 };
 
 static struct stack_layout
-get_stack_layout(size_t buffer_size, int token_count)
+get_stack_layout(int argc, size_t command_size)
 {
 	size_t stack_usage = 0;
 	stack_usage += sizeof(void (*)());
 	stack_usage += sizeof(int);
 	stack_usage += sizeof(char **);
-	const size_t arr_usage = (token_count + 1) * sizeof(char *);
+	const size_t arr_usage = (argc + 1) * sizeof(char *);
 	stack_usage += arr_usage;
-	const size_t padding = ROUND_UP(buffer_size, 4) % 4;
+	const size_t padding = ROUND_UP(command_size, 4) % 4;
 	stack_usage += padding;
-	stack_usage += buffer_size;
+	stack_usage += command_size;
 
 	ASSERT(stack_usage <= PGSIZE);
 
@@ -689,7 +689,7 @@ prepare_executable_and_arguments(char *buffer, struct intr_frame *if_)
 		sa.argv[sa.argc] = token;
 	}
 
-	struct stack_layout sl = get_stack_layout(sa.command_size, sa.argc);
+	struct stack_layout sl = get_stack_layout(sa.argc, sa.command_size);
 	if_->esp = prepare_stack(&sl, &sa, kpage);
 	return true;
 }
