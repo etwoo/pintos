@@ -23,6 +23,7 @@ typedef int tid_t;
 
 #define EXIT_EXCEPTION -1 /* Terminated by kernel, killed by exception. */
 #define EXIT_UNSET -2     /* Status code not yet known. */
+#define EXIT_NO_LOAD -3   /* Early error in load(). */
 
 /* Thread priorities. */
 #define PRI_MIN 0      /* Lowest priority. */

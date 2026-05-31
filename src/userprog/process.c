@@ -107,7 +107,7 @@ start_process(void *args_)
 	sema_up(&args->child_ready);
 
 	if (!success) {
-		thread_exit(EXIT_EXCEPTION); /* If load failed, quit. */
+		thread_exit(EXIT_NO_LOAD); /* If load failed, quit. */
 	}
 
 	/* Start the user process by simulating a return from an
@@ -183,6 +183,9 @@ process_exit(int status)
 	struct thread *cur = thread_current();
 	uint32_t *pd;
 
+	const bool early_error_in_load = (status == EXIT_NO_LOAD);
+	status = early_error_in_load ? EXIT_EXCEPTION : status;
+
 	/* Destroy the current process's page directory and switch back
 	   to the kernel-only page directory. */
 	pd = cur->pagedir;
@@ -227,7 +230,9 @@ process_exit(int status)
 	}
 	lock_release(&cur->wait.lock);
 
-	printf("%s: exit(%d)\n", cur->name, status);
+	if (!early_error_in_load) {
+		printf("%s: exit(%d)\n", cur->name, status);
+	}
 }
 
 /* Sets up the CPU for running user code in the current
