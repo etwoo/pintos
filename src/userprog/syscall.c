@@ -38,9 +38,9 @@ thread_exit_invalid_pointer_argument(struct intr_frame *f)
 static void *
 check_span_is_user_vaddr(struct intr_frame *f, const void *uaddr, unsigned sz)
 {
-	if (!is_user_vaddr(uaddr) ||        /* Obviously out-of-bounds.   */
-	    !is_user_vaddr(uaddr + sz) ||   /* See test: sc-bad-arg.c     */
-	    pg_ofs(uaddr) + sz >= PGSIZE) { /* See test: sc-boundary-3.c  */
+	if (!is_user_vaddr(uaddr) ||            /* Obviously out-of-bounds. */
+	    !is_user_vaddr(uaddr + sz) ||       /* See test: sc-bad-arg.c   */
+	    pg_ofs(uaddr) + sz - 1 >= PGSIZE) { /* See test: sc-boundary*.c */
 		thread_exit_invalid_pointer_argument(f);
 	}
 
