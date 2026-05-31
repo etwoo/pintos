@@ -212,7 +212,6 @@ syscall_write(struct intr_frame *f, int *stack)
 	stack += 2;
 
 	if (fd == STDOUT_FILENO) {
-		// TODO: if sz>512, call putbuf in chunks (console lock perf)
 		putbuf(buffer, sz);
 		f->eax = sz;
 		return;
