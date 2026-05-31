@@ -53,9 +53,18 @@ process_execute(const char *file_name)
 	}
 	strlcpy(spa.file_name, file_name, PGSIZE);
 
+	char debug_name[sizeof(thread_current()->name)];
+	strlcpy(debug_name, spa.file_name, sizeof(debug_name));
+	for (size_t i = 0; i < sizeof(debug_name); ++i) {
+		if (debug_name[i] == ' ') {
+			debug_name[i] = '\0';
+			break;
+		}
+	}
+
 	/* Create a new thread to execute FILE_NAME. */
 	const tid_t tentative_tid =
-		thread_create(spa.file_name, PRI_DEFAULT, start_process, &spa);
+		thread_create(debug_name, PRI_DEFAULT, start_process, &spa);
 	if (tentative_tid == TID_ERROR) {
 		/* On fail-fast, retain str ownership. */
 		palloc_free_page(spa.file_name);
