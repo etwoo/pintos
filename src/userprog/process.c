@@ -674,12 +674,5 @@ prepare_executable_and_arguments(char *buffer, struct intr_frame *if_)
 	memcpy(kpage + sl.stack_pos_argv_data, buffer, buffer_size);
 
 	if_->esp = upage + sl.stack_start;
-#if 0
-	hex_dump((uintptr_t)if_->esp,
-	         kpage + sl.stack_start,
-	         sl.stack_usage,
-	         true);
-#endif
-
 	return true;
 }
