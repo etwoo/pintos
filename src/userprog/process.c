@@ -133,11 +133,14 @@ int
 process_wait(tid_t child)
 {
 	int result = -1;
-	struct thread *t = thread_current();
+	if (child == TID_ERROR) {
+		return result;
+	}
 
+	struct thread *t = thread_current();
 	lock_acquire(&t->wait.lock);
 
-	while (child != TID_ERROR) {
+	while (true) {
 		ASSERT(lock_held_by_current_thread(&t->wait.lock));
 
 		struct thread_wait_code *got_child = NULL;
@@ -145,23 +148,31 @@ process_wait(tid_t child)
 		for (; e != list_end(&t->wait.children); e = list_next(e)) {
 			struct thread_wait_code *twc =
 				list_entry(e, struct thread_wait_code, elem);
-			if (twc->tid == child && twc->code != EXIT_UNSET) {
+			if (twc->tid == child) {
 				got_child = twc;
 				break;
 			}
 		}
 
-		if (got_child != NULL) {
+		if (got_child == NULL) {
+			break; /* No matching child. Fail-fast. */
+		}
+
+		if (got_child->code != EXIT_UNSET) {
+			/* Consume status code, and arrange for future,
+			   duplicate invocations of wait() to fail. */
 			result = got_child->code;
 			list_remove(&got_child->elem);
 			free(got_child);
-			lock_release(&t->wait.lock);
 			break;
 		}
 
+		/* Wait until matching child sets an exit code. */
+		ASSERT(got_child->code == EXIT_UNSET);
 		cond_wait(&t->wait.on_exit, &t->wait.lock);
 	}
 
+	lock_release(&t->wait.lock);
 	return result;
 }
 
