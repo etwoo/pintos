@@ -26,7 +26,7 @@
 #include <string.h>
 
 static thread_func start_process NO_RETURN;
-static bool prepare_executable_and_arguments(char *, struct intr_frame *);
+static bool prepare_executable_and_arguments(struct intr_frame *, char *);
 
 struct start_process_args {
 	char *file_name;
@@ -94,7 +94,7 @@ start_process(void *args_)
 	if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
 	if_.cs = SEL_UCSEG;
 	if_.eflags = FLAG_IF | FLAG_MBS;
-	success = prepare_executable_and_arguments(file_name, &if_);
+	success = prepare_executable_and_arguments(&if_, file_name);
 
 	if (success) {
 		/* On successful load(), take str ownership. */
@@ -663,13 +663,13 @@ prepare_stack(const struct stack_layout *s,
 }
 
 static bool
-prepare_executable_and_arguments(char *buffer, struct intr_frame *if_)
+prepare_executable_and_arguments(struct intr_frame *if_, char *command)
 {
 	struct stack_arguments sa = {
 		.argc = 0,
 		.argv = {NULL},
-		.command = buffer,
-		.command_size = strlen(buffer) + 1, /* with null terminator */
+		.command = command,
+		.command_size = strlen(command) + 1, /* with null terminator */
 	};
 	ASSERT(sa.command_size <= PGSIZE);
 
