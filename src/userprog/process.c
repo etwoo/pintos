@@ -634,9 +634,9 @@ struct stack_arguments {
 };
 
 static void *
-prepare_stack(const struct stack_layout *s,
-              const struct stack_arguments *a,
-              void *kpage)
+fill_stack_with_layout(const struct stack_layout *s,
+                       const struct stack_arguments *a,
+                       void *kpage)
 {
 	void *upage = PHYS_BASE - PGSIZE;
 
@@ -690,6 +690,6 @@ prepare_executable_and_arguments(struct intr_frame *if_, char *command)
 	}
 
 	struct stack_layout sl = get_stack_layout(sa.argc, sa.command_size);
-	if_->esp = prepare_stack(&sl, &sa, kpage);
+	if_->esp = fill_stack_with_layout(&sl, &sa, kpage);
 	return true;
 }
