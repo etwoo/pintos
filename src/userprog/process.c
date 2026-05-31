@@ -595,7 +595,6 @@ install_page(void *upage, void *kpage, bool writable)
 }
 
 struct stack_layout {
-	size_t stack_usage;
 	size_t stack_start;
 	size_t stack_pos_argc;
 	size_t stack_pos_argv_ptr;
@@ -619,7 +618,6 @@ get_stack_layout(size_t buffer_size, int token_count)
 	ASSERT(stack_usage <= PGSIZE);
 
 	struct stack_layout sl = {0};
-	sl.stack_usage = stack_usage;
 	sl.stack_start = PGSIZE - stack_usage;
 	sl.stack_pos_argc = sl.stack_start + sizeof(void (*)());
 	sl.stack_pos_argv_ptr = sl.stack_pos_argc + sizeof(int);
@@ -628,21 +626,59 @@ get_stack_layout(size_t buffer_size, int token_count)
 	return sl;
 }
 
+struct stack_arguments {
+	int argc;
+	char *argv[32]; /* Handle ARG_MAX of 32. */
+	char *command;
+	size_t command_size;
+};
+
+static void *
+prepare_stack(const struct stack_layout *s,
+              const struct stack_arguments *a,
+              void *kpage)
+{
+	void *upage = PHYS_BASE - PGSIZE;
+
+	memset(kpage + s->stack_start, 0, sizeof(void (*)())); /* return addr */
+	memcpy(kpage + s->stack_pos_argc, &a->argc, sizeof(a->argc));
+	{
+		const void *p = upage + s->stack_pos_argv_ptr + sizeof(char **);
+		memcpy(kpage + s->stack_pos_argv_ptr, &p, sizeof(char **));
+	}
+	for (int i = 0; i <= a->argc; ++i) {
+		void *kpage_cursor =
+			kpage + s->stack_pos_argv_arr + (i * sizeof(char *));
+		if (i == a->argc) {
+			memset(kpage_cursor, 0, sizeof(char *));
+		} else {
+			const char *p = upage + s->stack_pos_argv_data;
+			p += (a->argv[i] - a->command);
+			memcpy(kpage_cursor, &p, sizeof(char *));
+		}
+	}
+	memcpy(kpage + s->stack_pos_argv_data, a->command, a->command_size);
+
+	return upage + s->stack_start;
+}
+
 static bool
 prepare_executable_and_arguments(char *buffer, struct intr_frame *if_)
 {
-	char *argv[32] = {0}; /* Handle ARG_MAX of 32. */
-	void *upage = PHYS_BASE - PGSIZE;
+	struct stack_arguments sa = {
+		.argc = 0,
+		.argv = {NULL},
+		.command = buffer,
+		.command_size = strlen(buffer) + 1, /* with null terminator */
+	};
+	ASSERT(sa.command_size <= PGSIZE);
+
 	void *kpage = NULL;
-	int argc = 0;
 	char *save_ptr = NULL;
 
-	const size_t buffer_size = strlen(buffer) + 1; /* with trailing null */
-	ASSERT(buffer_size <= PGSIZE);
-
-	for (char *token = strtok_r(buffer, " ", &save_ptr);
-	     (token != NULL) && ((size_t)argc < ARRAY_SIZE(argv));
-	     token = strtok_r(NULL, " ", &save_ptr), ++argc) {
+	for (char *token = strtok_r(sa.command, " ", &save_ptr);
+	     (token != NULL) && ((size_t)sa.argc < ARRAY_SIZE(sa.argv));
+	     token = strtok_r(NULL, " ", &save_ptr), ++sa.argc) {
 		if (kpage == NULL) {
 			/* load() executable, including setup_stack() */
 			if (!load(token, &if_->eip, &if_->esp, &kpage)) {
@@ -650,29 +686,10 @@ prepare_executable_and_arguments(char *buffer, struct intr_frame *if_)
 			}
 			ASSERT(kpage != NULL);
 		}
-		argv[argc] = token;
+		sa.argv[sa.argc] = token;
 	}
 
-	const struct stack_layout sl = get_stack_layout(buffer_size, argc);
-	memset(kpage + sl.stack_start, 0, sizeof(void (*)())); /* return addr */
-	memcpy(kpage + sl.stack_pos_argc, &argc, sizeof(argc));
-	{
-		const void *p = upage + sl.stack_pos_argv_ptr + sizeof(char **);
-		memcpy(kpage + sl.stack_pos_argv_ptr, &p, sizeof(char **));
-	}
-	for (int i = 0; i <= argc; ++i) {
-		void *kpage_cursor =
-			kpage + sl.stack_pos_argv_arr + (i * sizeof(char *));
-		if (i == argc) {
-			memset(kpage_cursor, 0, sizeof(char *));
-		} else {
-			const char *p = upage + sl.stack_pos_argv_data;
-			p += (argv[i] - buffer);
-			memcpy(kpage_cursor, &p, sizeof(char *));
-		}
-	}
-	memcpy(kpage + sl.stack_pos_argv_data, buffer, buffer_size);
-
-	if_->esp = upage + sl.stack_start;
+	struct stack_layout sl = get_stack_layout(sa.command_size, sa.argc);
+	if_->esp = prepare_stack(&sl, &sa, kpage);
 	return true;
 }
