@@ -286,12 +286,7 @@ run_task(char **argv)
 
 	printf("Executing '%s':\n", task);
 #ifdef USERPROG
-	const int code = process_wait(process_execute(task));
-	char *delim = strchr(task, ' ');
-	if (delim != NULL) {
-		*delim = '\0';
-	}
-	printf("%s: exit(%d)\n", task, code);
+	process_wait(process_execute(task));
 #else
 	run_test(task);
 #endif

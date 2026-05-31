@@ -215,6 +215,8 @@ process_exit(int status)
 		free(twc);
 	}
 	lock_release(&cur->wait.lock);
+
+	printf("%s: exit(%d)\n", cur->name, status);
 }
 
 /* Sets up the CPU for running user code in the current

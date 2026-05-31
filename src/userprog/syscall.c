@@ -79,7 +79,6 @@ syscall_exit(struct intr_frame *f, int *stack)
 {
 	const int status = *stack++;
 	f->eax = status;
-	printf("%s: exit(%d)\n", thread_name(), status);
 	thread_exit(status);
 }
 
