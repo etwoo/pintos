@@ -594,23 +594,51 @@ install_page(void *upage, void *kpage, bool writable)
 	        pagedir_set_page(t->pagedir, upage, kpage, writable));
 }
 
+struct stack_layout {
+	size_t stack_usage;
+	size_t stack_start;
+	size_t stack_pos_argc;
+	size_t stack_pos_argv_ptr;
+	size_t stack_pos_argv_arr;
+	size_t stack_pos_argv_data;
+};
+
+static struct stack_layout
+get_stack_layout(size_t buffer_size, int token_count)
+{
+	size_t stack_usage = 0;
+	stack_usage += sizeof(void (*)());
+	stack_usage += sizeof(int);
+	stack_usage += sizeof(char **);
+	const size_t arr_usage = (token_count + 1) * sizeof(char *);
+	stack_usage += arr_usage;
+	const size_t padding = ROUND_UP(buffer_size, 4) % 4;
+	stack_usage += padding;
+	stack_usage += buffer_size;
+
+	ASSERT(stack_usage <= PGSIZE);
+
+	struct stack_layout sl = {0};
+	sl.stack_usage = stack_usage;
+	sl.stack_start = PGSIZE - stack_usage;
+	sl.stack_pos_argc = sl.stack_start + sizeof(void (*)());
+	sl.stack_pos_argv_ptr = sl.stack_pos_argc + sizeof(int);
+	sl.stack_pos_argv_arr = sl.stack_pos_argv_ptr + sizeof(char **);
+	sl.stack_pos_argv_data = sl.stack_pos_argv_arr + arr_usage + padding;
+	return sl;
+}
+
 static bool
 prepare_executable_and_arguments(char *buffer, struct intr_frame *if_)
 {
-	char *argv[32]; /* Handle ARG_MAX of 32. */
-	for (size_t i = 0; i < ARRAY_SIZE(argv); ++i) {
-		argv[i] = NULL;
-	}
-
-	void *kpage_begin = NULL;
-	void *kpage_end = NULL;
+	char *argv[32] = {0}; /* Handle ARG_MAX of 32. */
+	void *upage = PHYS_BASE - PGSIZE;
 	void *kpage = NULL;
 	int argc = 0;
 	char *save_ptr = NULL;
 
-#define KPAGE_TO_ESP(cur, end) (PHYS_BASE - (end - cur))
-
 	const size_t buffer_size = strlen(buffer) + 1; /* with trailing null */
+	ASSERT(buffer_size <= PGSIZE);
 
 	for (char *token = strtok_r(buffer, " ", &save_ptr);
 	     (token != NULL) && ((size_t)argc < ARRAY_SIZE(argv));
@@ -621,62 +649,37 @@ prepare_executable_and_arguments(char *buffer, struct intr_frame *if_)
 				return false;
 			}
 			ASSERT(kpage != NULL);
-			kpage_begin = kpage;
-			/* Seek to last word of page. */
-			kpage += (PGSIZE - sizeof(int));
-			kpage_end = kpage;
 		}
 		argv[argc] = token;
 	}
 
-	ASSERT(buffer_size <= PGSIZE);
-	kpage = kpage_end - buffer_size;
-	memcpy(kpage, buffer, buffer_size);
-
-	// TODO: why -4 offset below fix arg offsets? see also NOTE1
-	void *buffer_as_uaddr = KPAGE_TO_ESP(kpage, kpage_end) - 4;
-
-	if ((uintptr_t)kpage % 4 != 0) {
-		/* Word-aligned accesses perform better than unaligned accesses.
-		   Round the stack pointer down to a multiple of 4. */
-		kpage = (void *)(((uintptr_t)kpage / 4) * 4);
+	const struct stack_layout sl = get_stack_layout(buffer_size, argc);
+	memset(kpage + sl.stack_start, 0, sizeof(void (*)())); /* return addr */
+	memcpy(kpage + sl.stack_pos_argc, &argc, sizeof(argc));
+	{
+		const void *p = upage + sl.stack_pos_argv_ptr + sizeof(char **);
+		memcpy(kpage + sl.stack_pos_argv_ptr, &p, sizeof(char **));
 	}
-
 	for (int i = 0; i <= argc; ++i) {
-		const int pos = argc - i; /* push args right to left */
-		kpage -= sizeof(char *);
-		if (pos == argc) {
-			memset(kpage, 0, sizeof(char *));
+		void *kpage_cursor =
+			kpage + sl.stack_pos_argv_arr + (i * sizeof(char *));
+		if (i == argc) {
+			memset(kpage_cursor, 0, sizeof(char *));
 		} else {
-			const size_t offset = argv[pos] - buffer;
-			char *uaddr = buffer_as_uaddr + offset;
-			memcpy(kpage, &uaddr, sizeof(char *));
+			const char *p = upage + sl.stack_pos_argv_data;
+			p += (argv[i] - buffer);
+			memcpy(kpage_cursor, &p, sizeof(char *));
 		}
 	}
+	memcpy(kpage + sl.stack_pos_argv_data, buffer, buffer_size);
 
-	{
-		void *uaddr = NULL;
-		kpage -= sizeof(uaddr);
-		uaddr = KPAGE_TO_ESP(kpage, kpage_end);
-		memcpy(kpage, &uaddr, sizeof(uaddr));
-		ASSERT(sizeof(char **) == sizeof(uaddr));
-	}
-
-	kpage -= sizeof(argc);
-	memcpy(kpage, &argc, sizeof(int));
-	ASSERT(sizeof(int) == sizeof(argc));
-
-	/* Push a fake "return address". Although the entry function will never
-	 * return, its stack frame must have the same structure as any other. */
-	kpage -= sizeof(void (*)());
-	memset(kpage, 0, sizeof(void (*)()));
-
-	kpage -= 4; // TODO: why does this seem to fix argc passing? NOTE1
-
-	if_->esp = KPAGE_TO_ESP(kpage, kpage_end);
-	// ASSERT(kpage_end - kpage == PHYS_BASE - if_->esp);
-	ASSERT(kpage_begin <= kpage && kpage <= kpage_end);
-#undef KPAGE_TO_ESP
+	if_->esp = upage + sl.stack_start;
+#if 0
+	hex_dump((uintptr_t)if_->esp,
+	         kpage + sl.stack_start,
+	         sl.stack_usage,
+	         true);
+#endif
 
 	return true;
 }
