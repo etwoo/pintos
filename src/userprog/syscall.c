@@ -64,8 +64,28 @@ syscall_arg_peek(struct intr_frame *f, int *stack, unsigned *got_sz)
 		return check_span_is_user_vaddr(f, uaddr, *got_sz);
 	}
 
-	/* Check start of span (string length not yet known). */
-	return check_span_is_user_vaddr(f, uaddr, sizeof(int));
+	/* Probe start of span (string length not yet known). */
+	void *kaddr = check_span_is_user_vaddr(f, uaddr, 1);
+
+	void *kaddr_pos = kaddr;
+	void *uaddr_pos = uaddr;
+	while (true) {
+		const size_t span_limit = pg_round_up(uaddr_pos) - uaddr_pos;
+		ASSERT(span_limit < PGSIZE);
+
+		void *end = memchr(kaddr_pos, '\0', span_limit);
+		if (end != NULL) {
+			/* Check last segment of overall span. */
+			check_span_is_user_vaddr(f, uaddr_pos, end - kaddr_pos);
+			break;
+		}
+
+		/* If next uaddr has physical/kernel mapping, keep searching. */
+		uaddr_pos = pg_round_up(uaddr_pos) + 1;
+		kaddr_pos = check_span_is_user_vaddr(f, uaddr_pos, 1);
+	}
+
+	return kaddr;
 }
 
 static void NO_RETURN
