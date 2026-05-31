@@ -64,21 +64,7 @@ syscall_arg_peek(struct intr_frame *f, int *stack, unsigned *got_sz)
 	}
 
 	/* Check start of span (string length not yet known). */
-	void *kaddr = check_span_is_user_vaddr(f, uaddr, sizeof(int));
-
-	const size_t span_limit = pg_round_up(uaddr) - uaddr;
-	ASSERT(span_limit < PGSIZE);
-
-	void *terminator = memchr(kaddr, '\0', span_limit);
-	if (terminator == NULL) {
-		/* String parameter lacks null terminator. */
-		thread_exit_invalid_pointer_argument(f);
-	}
-
-	/* Check end of span, given known string length. */
-	(void)check_span_is_user_vaddr(f, uaddr, terminator - kaddr);
-
-	return kaddr;
+	return check_span_is_user_vaddr(f, uaddr, sizeof(int));
 }
 
 static void NO_RETURN
