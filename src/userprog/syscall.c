@@ -244,6 +244,10 @@ syscall_close(struct intr_frame *f, int *stack)
 {
 	const int fd = *stack++;
 
+	if (fd == STDIN_FILENO || fd == STDOUT_FILENO) {
+		thread_exit(EXIT_EXCEPTION);
+	}
+
 	struct file *file = fd_to_file(fd);
 	if (file == NULL) {
 		f->eax = IO_FAIL;
