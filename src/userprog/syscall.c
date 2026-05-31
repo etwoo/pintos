@@ -34,56 +34,51 @@ thread_exit_invalid_pointer_argument(struct intr_frame *f)
 	thread_exit(EXIT_EXCEPTION);
 }
 
-enum peek_mode {
-	PEEK_CSTRING,
-	PEEK_BUFFER,
-};
-
+/* If check succeeds, map uaddr to kaddr and return. */
 static void *
-syscall_arg_peek(struct intr_frame *f, int *stack, enum peek_mode m)
+check_span_is_user_vaddr(struct intr_frame *f, const void *uaddr, unsigned sz)
 {
-	uint32_t *pagedir = thread_current()->pagedir;
-
-	const void *uaddr = (void *)(*stack);
-	if (!is_user_vaddr(uaddr)) {
+	if (!is_user_vaddr(uaddr) ||        /* Obviously out-of-bounds.   */
+	    !is_user_vaddr(uaddr + sz) ||   /* See test: sc-bad-arg.c     */
+	    pg_ofs(uaddr) + sz >= PGSIZE) { /* See test: sc-boundary-3.c  */
 		thread_exit_invalid_pointer_argument(f);
 	}
 
-	void *kaddr = pagedir_get_page(pagedir, uaddr);
+	void *kaddr = pagedir_get_page(thread_current()->pagedir, uaddr);
 	if (kaddr == NULL) {
-		thread_exit_invalid_pointer_argument(f);
-	}
-
-	const size_t span = pg_round_up(uaddr) - uaddr;
-	ASSERT(span < PGSIZE);
-	if (PEEK_CSTRING == m && NULL == memchr(kaddr, '\0', span)) {
-		/* String parameter lacks null terminator. */
 		thread_exit_invalid_pointer_argument(f);
 	}
 
 	return kaddr;
 }
 
-static unsigned
-syscall_arg_peek_unsigned_nolimit(int *stack)
+static void *
+syscall_arg_peek(struct intr_frame *f, int *stack, unsigned *got_sz)
 {
-	ASSERT(sizeof(unsigned) == sizeof(*stack));
-	const unsigned sz = *stack;
-	return sz;
-}
+	void *uaddr = (void *)(*stack); /* uaddr parameter on top of stack */
 
-static unsigned
-syscall_arg_peek_unsigned(int *stack)
-{
-	unsigned sz = syscall_arg_peek_unsigned_nolimit(stack);
-
-	/* If provided size value looks crazy, clamp to a reasonable range.
-	   Syscalls like read() will then perform short reads instead. */
-	if (sz > PGSIZE) {
-		sz = PGSIZE;
+	if (got_sz != NULL) {
+		/* Check span using size on stack (second arg). */
+		*got_sz = *(stack + 1);
+		return check_span_is_user_vaddr(f, uaddr, *got_sz);
 	}
 
-	return sz;
+	/* Check start of span (string length not yet known). */
+	void *kaddr = check_span_is_user_vaddr(f, uaddr, sizeof(int));
+
+	const size_t span_limit = pg_round_up(uaddr) - uaddr;
+	ASSERT(span_limit < PGSIZE);
+
+	void *terminator = memchr(kaddr, '\0', span_limit);
+	if (terminator == NULL) {
+		/* String parameter lacks null terminator. */
+		thread_exit_invalid_pointer_argument(f);
+	}
+
+	/* Check end of span, given known string length. */
+	(void)check_span_is_user_vaddr(f, uaddr, terminator - kaddr);
+
+	return kaddr;
 }
 
 static void NO_RETURN
@@ -95,7 +90,7 @@ syscall_halt(void)
 static void NO_RETURN
 syscall_exit(struct intr_frame *f, int *stack)
 {
-	const int status = *stack;
+	const int status = *stack++;
 	f->eax = status;
 	thread_exit(status);
 }
@@ -103,7 +98,7 @@ syscall_exit(struct intr_frame *f, int *stack)
 static void
 syscall_exec(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek(f, stack++, PEEK_CSTRING);
+	void *filename = syscall_arg_peek(f, stack++, NULL);
 	f->eax = process_execute(filename);
 }
 
@@ -117,8 +112,8 @@ syscall_wait(struct intr_frame *f, int *stack)
 static void
 syscall_create(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek(f, stack++, PEEK_CSTRING);
-	const unsigned sz = syscall_arg_peek_unsigned_nolimit(stack++);
+	void *filename = syscall_arg_peek(f, stack++, NULL);
+	const unsigned sz = *stack++;
 
 	acquire_io_lock();
 	const bool created = filesys_create(filename, sz);
@@ -130,7 +125,7 @@ syscall_create(struct intr_frame *f, int *stack)
 static void
 syscall_remove(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek(f, stack++, PEEK_CSTRING);
+	void *filename = syscall_arg_peek(f, stack++, NULL);
 
 	acquire_io_lock();
 	const bool removed = filesys_remove(filename);
@@ -142,7 +137,7 @@ syscall_remove(struct intr_frame *f, int *stack)
 static void
 syscall_open(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek(f, stack++, PEEK_CSTRING);
+	void *filename = syscall_arg_peek(f, stack++, NULL);
 
 	acquire_io_lock();
 	struct file *fh = filesys_open(filename);
@@ -174,8 +169,10 @@ static void
 syscall_read(struct intr_frame *f, int *stack)
 {
 	const int fd = *stack++;
-	void *buffer = syscall_arg_peek(f, stack++, PEEK_BUFFER);
-	const unsigned sz = syscall_arg_peek_unsigned(stack++);
+
+	unsigned sz = 0;
+	void *buffer = syscall_arg_peek(f, stack, &sz);
+	stack += 2;
 
 	if (fd == STDIN_FILENO) {
 		if (sz == 0) {
@@ -202,8 +199,10 @@ static void
 syscall_write(struct intr_frame *f, int *stack)
 {
 	const int fd = *stack++;
-	void *buffer = syscall_arg_peek(f, stack++, PEEK_BUFFER);
-	const unsigned sz = syscall_arg_peek_unsigned(stack++);
+
+	unsigned sz = 0;
+	void *buffer = syscall_arg_peek(f, stack, &sz);
+	stack += 2;
 
 	if (fd == STDOUT_FILENO) {
 		// TODO: if sz>512, call putbuf in chunks (console lock perf)
@@ -226,7 +225,7 @@ static void
 syscall_seek(struct intr_frame *f, int *stack)
 {
 	const int fd = *stack++;
-	const unsigned sz = syscall_arg_peek_unsigned(stack++);
+	const unsigned sz = *stack++;
 
 	struct file *file = fd_to_file(fd);
 	if (file == NULL) {
@@ -272,69 +271,50 @@ syscall_close(struct intr_frame *f, int *stack)
 }
 
 static void
-check_span_is_user_vaddr(struct intr_frame *f, const void *uaddr, unsigned sz)
-{
-	if (!is_user_vaddr(uaddr) ||        /* Obviously out-of-bounds.   */
-	    !is_user_vaddr(uaddr + sz) ||   /* See test: sc-bad-arg.c     */
-	    pg_ofs(uaddr) + sz >= PGSIZE) { /* See test: sc-boundary-3.c  */
-		thread_exit_invalid_pointer_argument(f);
-	}
-}
-
-static void
 syscall_handler(struct intr_frame *f)
 {
-	const void *uaddr = f->esp;
-	int syscall_number = SYS_EXIT;
-
-	check_span_is_user_vaddr(f, uaddr, sizeof(syscall_number));
-
-	int *upage = pagedir_get_page(thread_current()->pagedir, uaddr);
-	if (upage == NULL) {
-		thread_exit_invalid_pointer_argument(f);
-	}
-
-	syscall_number = *upage++;
+	int *kaddr = check_span_is_user_vaddr(f, f->esp, sizeof(int));
+	const int syscall_number = *kaddr++;
 
 	switch (syscall_number) {
 	case SYS_HALT:
 		syscall_halt();
 		break;
 	case SYS_EXIT:
-		syscall_exit(f, upage);
+		syscall_exit(f, kaddr);
 		break;
 	case SYS_EXEC:
-		syscall_exec(f, upage);
+		syscall_exec(f, kaddr);
 		break;
 	case SYS_WAIT:
-		syscall_wait(f, upage);
+		syscall_wait(f, kaddr);
 		break;
 	case SYS_CREATE:
-		syscall_create(f, upage);
+		syscall_create(f, kaddr);
 		break;
 	case SYS_REMOVE:
-		syscall_remove(f, upage);
+		syscall_remove(f, kaddr);
 		break;
 	case SYS_OPEN:
-		syscall_open(f, upage);
+		syscall_open(f, kaddr);
 		break;
 	case SYS_FILESIZE:
-		syscall_filesize(f, upage);
+		syscall_filesize(f, kaddr);
 		break;
 	case SYS_READ:
-		syscall_read(f, upage);
+		syscall_read(f, kaddr);
 		break;
 	case SYS_WRITE:
-		syscall_write(f, upage);
+		syscall_write(f, kaddr);
 		break;
 	case SYS_SEEK:
-		syscall_seek(f, upage);
+		syscall_seek(f, kaddr);
 		break;
 	case SYS_TELL:
-		syscall_tell(f, upage);
+		syscall_tell(f, kaddr);
 		break;
 	case SYS_CLOSE:
-		syscall_close(f, upage);
+		syscall_close(f, kaddr);
 		break;
 	case SYS_MMAP:
 	case SYS_MUNMAP:
