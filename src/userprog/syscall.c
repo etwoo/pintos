@@ -38,6 +38,7 @@ thread_exit_invalid_pointer_argument(struct intr_frame *f)
 static void *
 check_span_is_user_vaddr(struct intr_frame *f, const void *uaddr, unsigned sz)
 {
+	// TODO: open() in close-twice.c fails one of these conditions
 	if (!is_user_vaddr(uaddr) ||            /* Obviously out-of-bounds. */
 	    !is_user_vaddr(uaddr + sz) ||       /* See test: sc-bad-arg.c   */
 	    pg_ofs(uaddr) + sz - 1 >= PGSIZE) { /* See test: sc-boundary*.c */
@@ -78,6 +79,7 @@ syscall_exit(struct intr_frame *f, int *stack)
 {
 	const int status = *stack++;
 	f->eax = status;
+	printf("%s: exit(%d)\n", thread_name(), status);
 	thread_exit(status);
 }
 
