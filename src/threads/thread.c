@@ -838,7 +838,7 @@ thread_signal_exit(tid_t parent, tid_t child, int child_status)
 			ASSERT(twc->code == EXIT_UNSET);
 			/* Update entry registered by process_execute(). */
 			twc->code = child_status;
-			cond_signal(&t->wait.on_exit, &t->wait.lock);
+			cond_broadcast(&t->wait.on_exit, &t->wait.lock);
 			break;
 		}
 	}

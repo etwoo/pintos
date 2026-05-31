@@ -374,7 +374,11 @@ cond_signal(struct condition *cond, struct lock *lock UNUSED)
 			list_entry(e, struct semaphore_elem, elem);
 		struct semaphore *candidate_sema = &tmp->semaphore;
 
+		if (list_empty(&candidate_sema->waiters)) {
+			continue;
+		}
 		ASSERT(list_size(&candidate_sema->waiters) == 1);
+
 		struct thread *candidate_thread =
 			list_entry(list_begin(&candidate_sema->waiters),
 		                   struct thread,
