@@ -14,6 +14,8 @@
 #include "threads/palloc.h"
 #include "threads/pte.h"
 #include "threads/thread.h"
+#include "vm/frame.h"
+#include "vm/swap.h"
 
 #include <console.h>
 #include <debug.h>
@@ -101,6 +103,9 @@ main(void)
 	palloc_init(user_page_limit);
 	malloc_init();
 	paging_init();
+#ifdef VM
+	frame_init();
+#endif
 
 	/* Segmentation. */
 #ifdef USERPROG
@@ -129,6 +134,9 @@ main(void)
 	ide_init();
 	locate_block_devices();
 	filesys_init(format_filesys);
+#endif
+#ifdef VM
+	swap_init();
 #endif
 
 	printf("Boot complete.\n");

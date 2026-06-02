@@ -21,3 +21,9 @@ release_io_lock(void)
 {
 	lock_release(&io_lock);
 }
+
+bool
+io_lock_held_by_current_thread(void)
+{
+	return lock_held_by_current_thread(&io_lock);
+}
