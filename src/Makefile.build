@@ -65,8 +65,8 @@ userprog_SRC += userprog/fd.c
 userprog_SRC += userprog/io.c
 
 # Virtual memory code.
-vm_SRC = vm/frame.c
-vm_SRC = vm/page.c
+vm_SRC  = vm/frame.c
+vm_SRC += vm/page.c
 # vm_SRC = vm/swap.c # TODO
 
 # Filesystem code.
