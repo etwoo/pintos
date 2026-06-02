@@ -5,12 +5,14 @@
 #include "filesys/file.h"
 #include "filesys/filesys.h"
 #include "threads/interrupt.h"
+#include "threads/malloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "userprog/fd.h"
 #include "userprog/io.h"
 #include "userprog/pagedir.h"
 #include "userprog/process.h"
+#include "vm/page.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -18,6 +20,8 @@
 
 #define IO_SUCCESS 0 /* Successful IO (when not returning fd or size). */
 #define IO_FAIL -1   /* Conceptually distinct from FD_INVALID. */
+
+#define MIN(x, y) ((x) < (y) ? (x) : (y))
 
 static void syscall_handler(struct intr_frame *);
 
@@ -34,6 +38,16 @@ thread_exit_invalid_pointer_argument(struct intr_frame *f)
 	thread_exit(EXIT_EXCEPTION);
 }
 
+static void NO_RETURN
+thread_exit_malloc_fail(struct intr_frame *f)
+{
+	f->eax = ENOMEM;
+	thread_exit(EXIT_EXCEPTION);
+}
+
+/* See __executable_start in ./src/lib/user/user.lds */
+static const void *VADDR_CODE_SEGMENT = (void *)0x08048000;
+
 /* If check succeeds, map uaddr to kaddr and return. */
 static void *
 check_span_is_user_vaddr(struct intr_frame *f, const void *uaddr, unsigned sz)
@@ -42,50 +56,96 @@ check_span_is_user_vaddr(struct intr_frame *f, const void *uaddr, unsigned sz)
 	if (!is_user_vaddr(uaddr) || !is_user_vaddr(uaddr_end)) {
 		thread_exit_invalid_pointer_argument(f);
 	}
-
-	struct thread *t = thread_current();
-	void *kaddr = pagedir_get_page(t->pagedir, uaddr);
-	const void *kaddr_end = pagedir_get_page(t->pagedir, uaddr_end);
-	if (kaddr == NULL || kaddr_end == NULL) {
+	if (pg_round_down(uaddr) == VADDR_CODE_SEGMENT ||
+	    pg_round_down(uaddr_end) == VADDR_CODE_SEGMENT) {
 		thread_exit_invalid_pointer_argument(f);
 	}
 
+	struct thread *t = thread_current();
+
+	void *begin = pg_round_down(uaddr);
+	void *end = pg_round_up(uaddr + sz) - 1;
+	for (void *cursor = begin; cursor < end; cursor += PGSIZE) {
+		void *kaddr = pagedir_get_page(t->pagedir, cursor);
+		if (kaddr == NULL) {
+#ifdef VM
+			if (!page_fault_on(f, cursor))
+#endif
+			{
+				thread_exit_invalid_pointer_argument(f);
+			}
+		}
+	}
+
+	void *kaddr = pagedir_get_page(t->pagedir, uaddr);
+	ASSERT(kaddr != NULL); /* Guaranteed by preceding loop. */
 	return kaddr;
 }
 
-static void *
-syscall_arg_peek(struct intr_frame *f, int *stack, unsigned *got_sz)
+static void
+syscall_arg_peek(struct intr_frame *f,
+                 int *stack,
+                 void **got_buffer_uaddr,
+                 unsigned *got_buffer_sz,
+                 char **got_cstring)
 {
 	void *uaddr = (void *)(*stack); /* uaddr parameter on top of stack */
+	if (got_buffer_uaddr != NULL) {
+		*got_buffer_uaddr = uaddr;
+	}
 
-	if (got_sz != NULL) {
+	if (got_buffer_sz != NULL) {
 		/* Check span using size on stack (second arg). */
-		*got_sz = *(stack + 1);
-		return check_span_is_user_vaddr(f, uaddr, *got_sz);
+		*got_buffer_sz = *(stack + 1);
+		check_span_is_user_vaddr(f, uaddr, *got_buffer_sz);
+		return;
 	}
 
 	/* Probe start of span (string length not yet known). */
 	void *kaddr = check_span_is_user_vaddr(f, uaddr, 1);
 
-	void *kaddr_pos = kaddr;
-	void *uaddr_pos = uaddr;
-	while (true) {
-		const size_t span_limit = pg_round_up(uaddr_pos) - uaddr_pos;
-		ASSERT(span_limit < PGSIZE);
+	const size_t span_limit = pg_round_up(uaddr) - uaddr;
+	ASSERT(span_limit > 0 && span_limit <= PGSIZE);
 
-		void *end = memchr(kaddr_pos, '\0', span_limit);
-		if (end != NULL) {
-			/* Check last segment of overall span. */
-			check_span_is_user_vaddr(f, uaddr_pos, end - kaddr_pos);
-			break;
+	struct {
+		char *str;
+		size_t len;
+	} spans[2] = {0};
+
+	void *end = memchr(kaddr, '\0', span_limit);
+	if (end != NULL) {
+		spans[0].str = kaddr;
+		spans[0].len = end - kaddr;
+	} else {
+		/* The remainder of this page lacks this string's null
+		   terminator. Search the next page (in uaddr space). */
+		spans[0].str = kaddr;
+		spans[0].len = span_limit;
+
+		kaddr = check_span_is_user_vaddr(f, uaddr + span_limit, 1);
+
+		end = memchr(kaddr, '\0', PGSIZE);
+		if (end == NULL) {
+			/* Next page lacks null terminator as well. */
+			thread_exit_invalid_pointer_argument(f);
 		}
 
-		/* If next uaddr has physical/kernel mapping, keep searching. */
-		uaddr_pos = pg_round_up(uaddr_pos) + 1;
-		kaddr_pos = check_span_is_user_vaddr(f, uaddr_pos, 1);
+		spans[1].str = kaddr;
+		spans[1].len = end - kaddr;
 	}
 
-	return kaddr;
+	const size_t len = spans[0].len + spans[1].len;
+	char *bounce = malloc(len + 1);
+	if (bounce == NULL) {
+		thread_exit_malloc_fail(f);
+	}
+
+	memcpy(bounce, spans[0].str, spans[0].len);
+	memcpy(bounce + spans[0].len, spans[1].str, spans[1].len);
+	bounce[len] = '\0';
+
+	ASSERT(got_cstring != NULL);
+	*got_cstring = bounce;
 }
 
 static void NO_RETURN
@@ -105,8 +165,11 @@ syscall_exit(struct intr_frame *f, int *stack)
 static void
 syscall_exec(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek(f, stack++, NULL);
+	char *filename = NULL;
+	syscall_arg_peek(f, stack++, NULL, NULL, &filename);
+
 	f->eax = process_execute(filename);
+	free(filename);
 }
 
 static void
@@ -119,7 +182,8 @@ syscall_wait(struct intr_frame *f, int *stack)
 static void
 syscall_create(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek(f, stack++, NULL);
+	char *filename = NULL;
+	syscall_arg_peek(f, stack++, NULL, NULL, &filename);
 	const unsigned sz = *stack++;
 
 	acquire_io_lock();
@@ -127,24 +191,28 @@ syscall_create(struct intr_frame *f, int *stack)
 	release_io_lock();
 
 	f->eax = created ? 1 : 0; /* create() returns bool, not integer code */
+	free(filename);
 }
 
 static void
 syscall_remove(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek(f, stack++, NULL);
+	char *filename = NULL;
+	syscall_arg_peek(f, stack++, NULL, NULL, &filename);
 
 	acquire_io_lock();
 	const bool removed = filesys_remove(filename);
 	release_io_lock();
 
 	f->eax = removed ? 1 : 0; /* remove() returns bool, not integer code */
+	free(filename);
 }
 
 static void
 syscall_open(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek(f, stack++, NULL);
+	char *filename = NULL;
+	syscall_arg_peek(f, stack++, NULL, NULL, &filename);
 
 	acquire_io_lock();
 	struct file *fh = filesys_open(filename);
@@ -155,6 +223,7 @@ syscall_open(struct intr_frame *f, int *stack)
 	} else {
 		f->eax = fd_register(fh);
 	}
+	free(filename);
 }
 
 static void
@@ -173,58 +242,77 @@ syscall_filesize(struct intr_frame *f, int *stack)
 }
 
 static void
-syscall_read(struct intr_frame *f, int *stack)
+syscall_io(int syscall_number, struct intr_frame *f, int *stack)
 {
 	const int fd = *stack++;
+	struct file *file = fd_to_file(fd);
 
+	void *uaddr = NULL;
 	unsigned sz = 0;
-	void *buffer = syscall_arg_peek(f, stack, &sz);
+	syscall_arg_peek(f, stack, &uaddr, &sz, NULL);
 	stack += 2;
 
-	if (fd == STDIN_FILENO) {
-		if (sz == 0) {
-			f->eax = IO_FAIL;
-		} else {
-			uint8_t *p = buffer;
+	struct thread *t = thread_current();
+	off_t total_bytes = 0;
+#ifdef VM
+	page_pin(uaddr, sz);
+#endif
+	switch (syscall_number) {
+	case SYS_READ:
+		if (fd == STDIN_FILENO) {
+			uint8_t *p = uaddr;
 			*p = input_getc();
-			f->eax = 1;
+			total_bytes = 1;
 		}
-		return;
+		break;
+	case SYS_WRITE:
+		if (fd == STDOUT_FILENO) {
+			ASSERT(sz < PGSIZE);
+			putbuf(pagedir_get_page(t->pagedir, uaddr), sz);
+			total_bytes += sz;
+		}
+		break;
+	default:
+		NOT_REACHED();
+		break;
 	}
 
-	struct file *file = fd_to_file(fd);
-	if (file == NULL) {
-		f->eax = IO_FAIL;
-	} else {
+	while (total_bytes < (off_t)sz && file != NULL) {
+		void *cursor = uaddr + total_bytes;
+		void *kaddr = pagedir_get_page(t->pagedir, cursor);
+		ASSERT(kaddr != NULL);
+
+		const size_t to_next = pg_round_down(cursor + PGSIZE) - cursor;
+		const size_t segment = MIN(to_next, sz - total_bytes);
+		off_t bytes = 0;
+
 		acquire_io_lock();
-		f->eax = file_read(file, buffer, sz);
+		switch (syscall_number) {
+		case SYS_READ:
+			bytes = file_read(file, kaddr, segment);
+			break;
+		case SYS_WRITE:
+			bytes = file_write(file, kaddr, segment);
+			break;
+		default:
+			NOT_REACHED();
+			break;
+		}
 		release_io_lock();
+
+		if (bytes <= 0) {
+			if (bytes < 0) {
+				total_bytes = bytes;
+			} /* else: reached EOF. */
+			break;
+		}
+
+		total_bytes += bytes;
 	}
-}
-
-static void
-syscall_write(struct intr_frame *f, int *stack)
-{
-	const int fd = *stack++;
-
-	unsigned sz = 0;
-	void *buffer = syscall_arg_peek(f, stack, &sz);
-	stack += 2;
-
-	if (fd == STDOUT_FILENO) {
-		putbuf(buffer, sz);
-		f->eax = sz;
-		return;
-	}
-
-	struct file *file = fd_to_file(fd);
-	if (file == NULL) {
-		f->eax = IO_FAIL;
-	} else {
-		acquire_io_lock();
-		f->eax = file_write(file, buffer, sz);
-		release_io_lock();
-	}
+#ifdef VM
+	page_unpin(uaddr, sz);
+#endif
+	f->eax = total_bytes;
 }
 
 static void
@@ -277,6 +365,34 @@ syscall_close(struct intr_frame *f, int *stack)
 }
 
 static void
+syscall_mmap(struct intr_frame *f, int *stack)
+{
+#ifdef VM
+	const int fd = *stack++;
+	uintptr_t uaddr = *stack++;
+	f->eax = page_mmap(fd, (void *)uaddr).id;
+#else
+	(void)stack; /* Unused. */
+	f->eax = ENOSYS;
+#endif
+}
+
+static void
+syscall_munmap(struct intr_frame *f, int *stack)
+{
+#ifdef VM
+	const struct page_descriptor pd = {
+		.id = *stack++,
+	};
+	page_munmap(pd);
+	f->eax = IO_SUCCESS;
+#else
+	(void)stack; /* Unused. */
+	f->eax = ENOSYS;
+#endif
+}
+
+static void
 syscall_handler(struct intr_frame *f)
 {
 	int *kaddr = check_span_is_user_vaddr(f, f->esp, sizeof(int));
@@ -308,10 +424,8 @@ syscall_handler(struct intr_frame *f)
 		syscall_filesize(f, kaddr);
 		break;
 	case SYS_READ:
-		syscall_read(f, kaddr);
-		break;
 	case SYS_WRITE:
-		syscall_write(f, kaddr);
+		syscall_io(syscall_number, f, kaddr);
 		break;
 	case SYS_SEEK:
 		syscall_seek(f, kaddr);
@@ -323,7 +437,11 @@ syscall_handler(struct intr_frame *f)
 		syscall_close(f, kaddr);
 		break;
 	case SYS_MMAP:
+		syscall_mmap(f, kaddr);
+		break;
 	case SYS_MUNMAP:
+		syscall_munmap(f, kaddr);
+		break;
 	case SYS_CHDIR:
 	case SYS_MKDIR:
 	case SYS_READDIR:
