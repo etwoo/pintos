@@ -566,7 +566,7 @@ init_thread(struct thread *t, const char *name, int priority)
 	cond_init(&t->wait.on_exit);
 	list_init(&t->wait.children);
 	page_init(&t->vm.page_table);
-	t->mmap_generator = 1; /* first valid mapping ID */
+	t->vm.mmap_generator = 1; /* first valid mapping ID */
 	t->magic = THREAD_MAGIC;
 
 	old_level = intr_disable();
