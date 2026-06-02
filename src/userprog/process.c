@@ -556,6 +556,10 @@ load_segment(struct file *file,
 		uint8_t *kpage = page_create_eager(upage, writable);
 		if (kpage == NULL)
 			return false;
+		// TODO: switch from page_create_eager() to lazy, in cases:
+		// 1) page_read_bytes == PGSIZE -- map entire page to file
+		// 2) page_zero_bytes == PGSIZE -- all-zero
+		// TODO: retain existing logic for mixed content
 
 		/* Load this page. */
 		if (file_read(file, kpage, page_read_bytes) !=
