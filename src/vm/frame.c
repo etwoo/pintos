@@ -73,6 +73,7 @@ frame_create_impl(enum palloc_flags extra_flags, void *upage, bool writable)
 		return NULL;
 	}
 
+	// TODO: add entry to global frame_table
 	return kpage;
 }
 
