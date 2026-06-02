@@ -115,6 +115,8 @@ start_process(void *args_)
 	struct intr_frame if_ = {0};
 	bool success = false;
 
+	page_init();
+
 	/* Initialize interrupt frame and load executable. */
 	memset(&if_, 0, sizeof if_);
 	if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;

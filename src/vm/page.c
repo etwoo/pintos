@@ -32,21 +32,26 @@ page_less(const struct hash_elem *a_,
 }
 
 void
-page_init(struct hash *page_table)
+page_init(void)
 {
-	hash_init(page_table, page_hash, page_less, NULL);
+	struct thread *t = thread_current();
+	ASSERT(!t->vm.initialized);
+	hash_init(&t->vm.page_table, page_hash, page_less, NULL);
+	t->vm.initialized = true;
 }
 
 static bool
 page_fault_impl(void *uaddr, void **kpage_out)
 {
+	void *kpage = NULL;
+
 	struct thread *t = thread_current();
+	ASSERT(t->vm.initialized);
+
 	struct page_entry key = {
 		.upage = pg_round_down(uaddr),
 		.writable = true,
 	};
-	void *kpage = NULL;
-
 	struct hash_elem *e = hash_find(&t->vm.page_table, &key.elem);
 	if (e == NULL) {
 		goto err;
@@ -88,6 +93,7 @@ static bool
 page_create_lazy(enum palloc_flags extra_flags, void *upage, bool writable)
 {
 	struct thread *t = thread_current();
+	ASSERT(t->vm.initialized);
 
 	struct page_entry *entry = malloc(sizeof(*entry));
 	if (entry == NULL) {
