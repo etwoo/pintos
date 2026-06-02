@@ -1,9 +1,6 @@
 #include "vm/frame.h"
 
-#include "threads/palloc.h"
 #include "threads/synch.h"
-#include "threads/thread.h"
-#include "userprog/pagedir.h"
 
 #include <hash.h>
 #include <list.h>
