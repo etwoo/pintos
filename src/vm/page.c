@@ -89,6 +89,7 @@ page_fault_on(void *uaddr)
 	return page_fault_impl(uaddr, NULL);
 }
 
+// TODO: reuse page_create_lazy() for mmap()
 static bool
 page_create_lazy(enum palloc_flags extra_flags, void *upage, bool writable)
 {
