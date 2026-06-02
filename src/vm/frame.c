@@ -56,37 +56,3 @@ frame_init(void)
 	lock_init(&ft.lock);
 	list_init(&ft.table);
 }
-
-static void *
-frame_create_impl(enum palloc_flags extra_flags, void *upage, bool writable)
-{
-	void *kpage = palloc_get_page(extra_flags | PAL_USER);
-	if (kpage == NULL) {
-		return NULL;
-	}
-
-	struct thread *t = thread_current();
-	ASSERT(pagedir_get_page(t->pagedir, upage) == NULL);
-
-	if (!pagedir_set_page(t->pagedir, upage, kpage, writable)) {
-		palloc_free_page(kpage);
-		return NULL;
-	}
-
-	// TODO: add entry to global frame_table
-	return kpage;
-}
-
-void *
-frame_create(void *upage, bool writable)
-{
-	return frame_create_impl(0, upage, writable);
-}
-
-void *
-frame_create_zero(void *upage, bool writable)
-{
-	return frame_create_impl(PAL_ZERO, upage, writable);
-}
-
-// TODO: palloc_free_page in frame_destroy(), and call from process_exit()

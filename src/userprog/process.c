@@ -16,7 +16,7 @@
 #include "userprog/io.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
-#include "vm/frame.h"
+#include "vm/page.h"
 
 #include <array.h>
 #include <debug.h>
@@ -551,7 +551,7 @@ load_segment(struct file *file,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* Get page of memory. Add it to the process's address space. */
-		uint8_t *kpage = frame_create(upage, writable);
+		uint8_t *kpage = page_create(upage, writable);
 		if (kpage == NULL)
 			return false;
 
@@ -578,7 +578,7 @@ setup_stack(void **esp, void **kpage)
 	ASSERT(kpage != NULL && *kpage == NULL);
 	void *upage = PHYS_BASE - PGSIZE;
 
-	*kpage = frame_create_zero(upage, true);
+	*kpage = page_create_zero(upage, true);
 	if (*kpage == NULL) {
 		return false;
 	}

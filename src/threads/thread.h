@@ -5,6 +5,7 @@
 
 #include <debug.h>
 #include <fixed-point.h>
+#include <hash.h>
 #include <list.h>
 #include <stdint.h>
 
@@ -116,6 +117,10 @@ struct thread {
 		struct condition on_exit;
 		struct list children;
 	} wait; /* support for process_execute() and process_wait() */
+	struct {
+		struct hash page_table;
+		int mmap_generator;
+	} vm;
 
 	struct list_elem allelem; /* List element for all threads list. */
 
