@@ -8,6 +8,8 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "userprog/pagedir.h"
+#include "vm/page.h"
 
 #include <array.h>
 #include <debug.h>
@@ -564,6 +566,9 @@ init_thread(struct thread *t, const char *name, int priority)
 	lock_init(&t->wait.lock);
 	cond_init(&t->wait.on_exit);
 	list_init(&t->wait.children);
+	lock_init(&t->vm.lock);
+	t->vm.initialized = false;
+	t->vm.mmap_generator = 1; /* first valid mapping ID */
 	t->magic = THREAD_MAGIC;
 
 	old_level = intr_disable();
@@ -801,10 +806,13 @@ thread_get_priority_of_mlfqs(struct thread *t)
 	return clamped;
 }
 
-void
-thread_signal_exit(tid_t parent, tid_t child, int child_status)
+static void
+thread_call_on_match(tid_t target,
+                     struct lock *choose_lock(struct thread *),
+                     void do_work_with_lock(struct thread *, void *),
+                     void *aux)
 {
-	if (parent == TID_ERROR) {
+	if (target == TID_ERROR) {
 		return;
 	}
 
@@ -815,7 +823,7 @@ thread_signal_exit(tid_t parent, tid_t child, int child_status)
 		for (; e != list_end(&all_list); e = list_next(e)) {
 			struct thread *candidate =
 				list_entry(e, struct thread, allelem);
-			if (candidate->tid == parent) {
+			if (candidate->tid == target) {
 				t = candidate;
 				break;
 			}
@@ -827,21 +835,135 @@ thread_signal_exit(tid_t parent, tid_t child, int child_status)
 	}
 
 	/* Acquire thread-level lock, and then restore interrupts. */
-	lock_acquire(&t->wait.lock);
+	lock_acquire(choose_lock(t));
 	intr_set_level(old_level);
+
+	do_work_with_lock(t, aux);
+
+	lock_release(choose_lock(t));
+}
+
+static struct lock *
+get_wait_lock(struct thread *t)
+{
+	return &t->wait.lock;
+}
+
+struct status_args {
+	tid_t child;
+	int child_status;
+};
+
+static void
+set_child_status(struct thread *t, void *aux)
+{
+	ASSERT(lock_held_by_current_thread(&t->wait.lock));
+	struct status_args *args = aux;
 
 	struct list_elem *e = list_begin(&t->wait.children);
 	for (; e != list_end(&t->wait.children); e = list_next(e)) {
 		struct thread_wait_code *twc =
 			list_entry(e, struct thread_wait_code, elem);
-		if (twc->tid == child) {
+		if (twc->tid == args->child) {
 			ASSERT(twc->code == EXIT_UNSET);
 			/* Update entry registered by process_execute(). */
-			twc->code = child_status;
+			twc->code = args->child_status;
 			cond_broadcast(&t->wait.on_exit, &t->wait.lock);
 			break;
 		}
 	}
-
-	lock_release(&t->wait.lock);
 }
+
+void
+thread_signal_exit(tid_t parent, tid_t child, int child_status)
+{
+	struct status_args args = {
+		.child = child,
+		.child_status = child_status,
+	};
+	thread_call_on_match(parent, get_wait_lock, set_child_status, &args);
+}
+
+#ifdef VM
+
+static struct lock *
+get_vm_lock(struct thread *t)
+{
+	return &t->vm.lock;
+}
+
+struct evict_args {
+	void *upage;
+	void *kpage_stolen;
+};
+
+/* Reach into page.c internals. */
+extern void *page_evict_internal(struct thread *t, void *upage);
+
+static void
+page_evict_glue(struct thread *t, void *aux)
+{
+	struct evict_args *args = aux;
+	args->kpage_stolen = page_evict_internal(t, args->upage);
+}
+
+void *
+thread_page_evict(tid_t victim, void *upage)
+{
+	struct evict_args args = {
+		.upage = upage,
+		.kpage_stolen = NULL,
+	};
+	thread_call_on_match(victim, get_vm_lock, page_evict_glue, &args);
+	return args.kpage_stolen;
+}
+
+struct is_accessed_args {
+	void *upage;
+	bool found_thread;
+	bool is_accessed;
+};
+
+static void
+page_is_accessed(struct thread *t, void *aux)
+{
+	ASSERT(lock_held_by_current_thread(&t->vm.lock));
+
+	struct is_accessed_args *args = aux;
+	args->found_thread = true;
+
+	void *kpage = pagedir_get_page(t->pagedir, args->upage);
+	args->is_accessed =
+		/* Page accessed via user virtual address. */
+		pagedir_is_accessed(t->pagedir, args->upage) ||
+		/* Page accessed via kernel virtual address (alias). */
+		(kpage != NULL && pagedir_is_accessed(t->pagedir, kpage));
+	if (args->is_accessed) {
+		/* Clear accessed bit on both aliases. */
+		pagedir_set_accessed(t->pagedir, args->upage, false);
+		if (kpage != NULL) {
+			pagedir_set_accessed(t->pagedir, kpage, false);
+		}
+	}
+}
+
+enum thread_page
+thread_page_is_accessed_test_and_set(tid_t tid, void *upage)
+{
+	struct is_accessed_args args = {
+		.upage = upage,
+		.found_thread = false,
+		.is_accessed = false,
+	};
+	thread_call_on_match(tid, get_vm_lock, page_is_accessed, &args);
+	if (!args.found_thread) {
+		ASSERT(!args.is_accessed);
+		return THREAD_PAGE_UNKNOWN;
+	} else if (args.is_accessed) {
+		return THREAD_PAGE_IS_ACCESSED;
+	} else {
+		return THREAD_PAGE_NOT_ACCESSED;
+	}
+}
+
+#endif
