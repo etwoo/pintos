@@ -16,6 +16,7 @@
 #include "userprog/io.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
+#include "vm/frame.h"
 
 #include <array.h>
 #include <debug.h>
@@ -453,8 +454,6 @@ done:
 
 /* load() helpers. */
 
-static bool install_page(void *upage, void *kpage, bool writable);
-
 /* Checks whether PHDR describes a valid, loadable segment in
    FILE and returns true if so, false otherwise. */
 static bool
@@ -535,24 +534,17 @@ load_segment(struct file *file,
 			read_bytes < PGSIZE ? read_bytes : PGSIZE;
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-		/* Get a page of memory. */
-		uint8_t *kpage = palloc_get_page(PAL_USER);
+		/* Get page of memory. Add it to the process's address space. */
+		uint8_t *kpage = frame_create(upage, writable);
 		if (kpage == NULL)
 			return false;
 
 		/* Load this page. */
 		if (file_read(file, kpage, page_read_bytes) !=
 		    (int)page_read_bytes) {
-			palloc_free_page(kpage);
 			return false;
 		}
 		memset(kpage + page_read_bytes, 0, page_zero_bytes);
-
-		/* Add the page to the process's address space. */
-		if (!install_page(upage, kpage, writable)) {
-			palloc_free_page(kpage);
-			return false;
-		}
 
 		/* Advance. */
 		read_bytes -= page_read_bytes;
@@ -567,40 +559,16 @@ load_segment(struct file *file,
 static bool
 setup_stack(void **esp, void **kpage)
 {
-	bool success = false;
-
 	ASSERT(kpage != NULL && *kpage == NULL);
-	*kpage = palloc_get_page(PAL_USER | PAL_ZERO);
-	if (*kpage != NULL) {
-		success = install_page(((uint8_t *)PHYS_BASE) - PGSIZE,
-		                       *kpage,
-		                       true);
-		if (success)
-			*esp = PHYS_BASE;
-		else
-			palloc_free_page(*kpage);
+	void *upage = PHYS_BASE - PGSIZE;
+
+	*kpage = frame_create_zero(upage, true);
+	if (*kpage == NULL) {
+		return false;
 	}
-	return success;
-}
 
-/* Adds a mapping from user virtual address UPAGE to kernel
-   virtual address KPAGE to the page table.
-   If WRITABLE is true, the user process may modify the page;
-   otherwise, it is read-only.
-   UPAGE must not already be mapped.
-   KPAGE should probably be a page obtained from the user pool
-   with palloc_get_page().
-   Returns true on success, false if UPAGE is already mapped or
-   if memory allocation fails. */
-static bool
-install_page(void *upage, void *kpage, bool writable)
-{
-	struct thread *t = thread_current();
-
-	/* Verify that there's not already a page at that virtual
-	   address, then map our page there. */
-	return (pagedir_get_page(t->pagedir, upage) == NULL &&
-	        pagedir_set_page(t->pagedir, upage, kpage, writable));
+	*esp = PHYS_BASE;
+	return true;
 }
 
 struct stack_layout {
