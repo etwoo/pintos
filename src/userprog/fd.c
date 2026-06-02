@@ -8,6 +8,9 @@ fd_register(struct file *file)
 {
 	struct thread *t = thread_current();
 	struct fdtable_entry *fde = malloc(sizeof(*fde));
+	if (fde == NULL) {
+		return FD_INVALID;
+	}
 	fde->fd = t->fd_generator++;
 	fde->file = file;
 	list_push_back(&t->fd_table, &fde->elem);

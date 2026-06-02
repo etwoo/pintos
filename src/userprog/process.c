@@ -46,11 +46,16 @@ process_execute(const char *file_name)
 	sema_init(&spa.child_ready, 0);
 	spa.child_tid = TID_ERROR;
 
+	struct thread_wait_code *twc = malloc(sizeof(*twc));
+	if (twc == NULL) {
+		goto err;
+	}
+
 	/* Make a copy of FILE_NAME.
 	   Otherwise there's a race between the caller and load(). */
 	spa.file_name = palloc_get_page(0);
 	if (spa.file_name == NULL) {
-		return spa.child_tid;
+		goto err;
 	}
 	strlcpy(spa.file_name, file_name, PGSIZE);
 
@@ -67,26 +72,37 @@ process_execute(const char *file_name)
 	const tid_t tentative_tid =
 		thread_create(debug_name, PRI_DEFAULT, start_process, &spa);
 	if (tentative_tid == TID_ERROR) {
-		/* On fail-fast, retain str ownership. */
-		palloc_free_page(spa.file_name);
-	} else {
-		/* Thread started. Now wait for load() in thread_func. */
-		sema_down(&spa.child_ready);
+		goto err;
 	}
+
+	/* Thread started. Now wait for load() in thread_func. */
+	sema_down(&spa.child_ready);
 
 	if (spa.child_tid != TID_ERROR) {
 		/* On successful load(), register child_tid with parent. */
-		struct thread_wait_code *twc = malloc(sizeof(*twc));
+		ASSERT(twc != NULL);
 		twc->tid = spa.child_tid;
 		twc->code = EXIT_UNSET; /* Will update in process_exit(). */
 		struct thread *parent = thread_current();
 		lock_acquire(&parent->wait.lock);
 		list_push_back(&parent->wait.children, &twc->elem);
 		lock_release(&parent->wait.lock);
+	} else {
+		free(twc);
 	}
 
 	ASSERT(spa.child_tid == tentative_tid || spa.child_tid == TID_ERROR);
 	return spa.child_tid;
+
+err:
+	if (twc != NULL) {
+		free(twc);
+	}
+	if (spa.file_name != NULL) {
+		/* On fail-fast, retain str ownership. */
+		palloc_free_page(spa.file_name);
+	}
+	return TID_ERROR;
 }
 
 /* A thread function that loads a user process and starts it
