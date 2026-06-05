@@ -568,7 +568,7 @@ load_segment(int fd,
 				return false;
 			}
 			file_seek(file, pos + page_read_bytes);
-		} else if (page_zero_bytes == PGSIZE) {
+		} else if (false && page_zero_bytes == PGSIZE) { // TODO restore
 			if (!page_map_zero(upage, rw)) {
 				return false;
 			}
