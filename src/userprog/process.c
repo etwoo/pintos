@@ -342,7 +342,8 @@ struct Elf32_Phdr {
 
 static bool setup_stack(void **esp, void **kpage);
 static bool validate_segment(const struct Elf32_Phdr *, struct file *);
-static bool load_segment(struct file *file,
+static bool load_segment(int fd,
+                         struct file *file,
                          off_t ofs,
                          uint8_t *upage,
                          uint32_t read_bytes,
@@ -377,6 +378,8 @@ load(const char *file_name, void (**eip)(void), void **esp, void **kpage)
 		printf("load: %s: open failed\n", file_name);
 		goto done;
 	}
+
+	const int fd = fd_register(file);
 
 	/* Read and verify executable header. */
 	if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr ||
@@ -438,7 +441,8 @@ load(const char *file_name, void (**eip)(void), void **esp, void **kpage)
 						page_offset + phdr.p_memsz,
 						PGSIZE);
 				}
-				if (!load_segment(file,
+				if (!load_segment(fd,
+				                  file,
 				                  file_page,
 				                  (void *)mem_page,
 				                  read_bytes,
@@ -462,7 +466,6 @@ load(const char *file_name, void (**eip)(void), void **esp, void **kpage)
 
 	/* On successful load(), deny writes to executable file until exit(). */
 	file_deny_write(file);
-	fd_register(file);
 
 done:
 	/* We arrive here whether the load is successful or not. */
@@ -532,7 +535,8 @@ validate_segment(const struct Elf32_Phdr *phdr, struct file *file)
    Return true if successful, false if a memory allocation error
    or disk read error occurs. */
 static bool
-load_segment(struct file *file,
+load_segment(int fd,
+             struct file *file,
              off_t ofs,
              uint8_t *upage,
              uint32_t read_bytes,
@@ -542,6 +546,8 @@ load_segment(struct file *file,
 	ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
 	ASSERT(pg_ofs(upage) == 0);
 	ASSERT(ofs % PGSIZE == 0);
+	ASSERT(io_lock_held_by_current_thread());
+	const enum page_rw rw = writable ? PAGE_WRITABLE : PAGE_READONLY;
 
 	file_seek(file, ofs);
 	while (read_bytes > 0 || zero_bytes > 0) {
@@ -553,20 +559,29 @@ load_segment(struct file *file,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* Get page of memory. Add it to the process's address space. */
-		uint8_t *kpage = page_create_eager(upage, writable);
-		if (kpage == NULL)
-			return false;
-		// TODO: switch from page_create_eager() to lazy, in cases:
-		// 1) page_read_bytes == PGSIZE -- map entire page to file
-		// 2) page_zero_bytes == PGSIZE -- all-zero
-		// TODO: retain existing logic for mixed content
-
-		/* Load this page. */
-		if (file_read(file, kpage, page_read_bytes) !=
-		    (int)page_read_bytes) {
-			return false;
+		if (page_read_bytes == PGSIZE) {
+			const off_t pos = file_tell(file);
+			if (!page_map(fd, pos, upage, rw)) {
+				return false;
+			}
+			file_seek(file, pos + page_read_bytes);
+		} else if (page_zero_bytes == PGSIZE) {
+			if (!page_map_zero(upage, rw)) {
+				return false;
+			}
+			ASSERT(page_read_bytes == 0);
+		} else {
+			uint8_t *kpage = page_create(0, upage, rw);
+			if (kpage == NULL) {
+				return false;
+			}
+			/* Load this page. */
+			if (file_read(file, kpage, page_read_bytes) !=
+			    (int)page_read_bytes) {
+				return false;
+			}
+			memset(kpage + page_read_bytes, 0, page_zero_bytes);
 		}
-		memset(kpage + page_read_bytes, 0, page_zero_bytes);
 
 		/* Advance. */
 		read_bytes -= page_read_bytes;
@@ -584,7 +599,7 @@ setup_stack(void **esp, void **kpage)
 	ASSERT(kpage != NULL && *kpage == NULL);
 	void *upage = PHYS_BASE - PGSIZE;
 
-	*kpage = page_create_eager_zero(upage, true);
+	*kpage = page_create(PAL_ZERO, upage, PAGE_WRITABLE);
 	if (*kpage == NULL) {
 		return false;
 	}
