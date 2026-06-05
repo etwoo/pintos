@@ -176,7 +176,10 @@ page_fault_on(void *uaddr)
 static struct page_entry *
 page_map_common(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 {
-	ASSERT(pg_round_down(upage) == upage); /* Must be page-aligned. */
+	if (pg_round_down(upage) != upage) {
+		/* Reject any uaddr not aligned on a page boundary. */
+		return NULL;
+	}
 
 	struct thread *t = thread_current();
 	ASSERT(t->vm.initialized);
@@ -189,6 +192,7 @@ page_map_common(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 		collision = hash_find(&t->vm.page_table, &key.elem);
 	}
 	if (collision != NULL) {
+		/* Reject any uaddr that collides with an existing mapping. */
 		return NULL;
 	}
 
