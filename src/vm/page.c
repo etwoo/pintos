@@ -132,10 +132,6 @@ page_fault_impl(void *uaddr, void **kpage_out)
 
 	if (entry->type == PAGE_FILE_BACKED) {
 		struct file *file = fd_to_file(entry->file.fd);
-		// TODO: what if page fault for mapping set by page_map() only
-		// happens after fd is closed? since mapping already happened,
-		// fault should work, but deferred fd_to_file() in fault handler
-		// will fail, hit ASSERT below; maybe give fd a reference count?
 		ASSERT(file != NULL);
 		ASSERT(intr_get_level() == INTR_ON);
 		acquire_io_lock();
@@ -176,6 +172,11 @@ page_fault_on(void *uaddr)
 static struct page_entry *
 page_map_common(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 {
+	if (upage == NULL) {
+		/* Reject mapping at address zero. */
+		return NULL;
+	}
+
 	if (pg_round_down(upage) != upage) {
 		/* Reject any uaddr not aligned on a page boundary. */
 		return NULL;

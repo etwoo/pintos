@@ -282,7 +282,6 @@ syscall_mmap(struct intr_frame *f, int *stack)
 {
 	const int fd = *stack++;
 	uintptr_t uaddr = *stack++;
-	// TODO: handle uaddr misalignment?
 	f->eax = page_mmap(fd, (void *)uaddr).id;
 }
 
