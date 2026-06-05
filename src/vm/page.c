@@ -75,12 +75,13 @@ page_destructor(struct hash_elem *e_, void *aux UNUSED)
 		file_seek(file, entry->file.pos);
 		const off_t eof = file_length(file);
 		const off_t bytes = file_write(file, kaddr, PGSIZE);
-		ASSERT(bytes == PGSIZE ||
-		       bytes + entry->file.pos == eof);
+		ASSERT(bytes == PGSIZE || bytes + entry->file.pos == eof);
 		release_io_lock();
 	}
 
 	pagedir_clear_page(t->pagedir, entry->upage);
+
+	// TODO palloc_free_page()?
 
 	// TODO: free allocated page_entry; currently seems to cause
 	// weird page faults and crashes; not sure why
@@ -114,7 +115,6 @@ page_fault_impl(void *uaddr, void **kpage_out)
 
 	struct page_entry key = {
 		.upage = pg_round_down(uaddr),
-		.rw = PAGE_WRITABLE, // TODO rm, unused
 	};
 	struct hash_elem *e = hash_find(&t->vm.page_table, &key.elem);
 	if (e == NULL) {
@@ -173,7 +173,6 @@ page_fault_on(void *uaddr)
 	return page_fault_impl(uaddr, NULL);
 }
 
-// TODO: free() page_entry values in hashtable (malloc below) on process_exit()
 static struct page_entry *
 page_map_common(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 {
@@ -181,6 +180,17 @@ page_map_common(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 
 	struct thread *t = thread_current();
 	ASSERT(t->vm.initialized);
+
+	struct hash_elem *collision = NULL;
+	{
+		struct page_entry key = {
+			.upage = upage,
+		};
+		collision = hash_find(&t->vm.page_table, &key.elem);
+	}
+	if (collision != NULL) {
+		return NULL;
+	}
 
 	struct page_entry *entry = malloc(sizeof(*entry));
 	if (entry == NULL) {
@@ -192,7 +202,7 @@ page_map_common(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 	entry->rw = rw;
 	entry->type = PAGE_ANONYMOUS;
 	struct hash_elem *e = hash_insert(&t->vm.page_table, &entry->elem);
-	ASSERT(e == NULL); // TODO: handle duplicate or overlapping upage
+	ASSERT(e == NULL); /* Guaranteed by earlier hash_find(). */
 	return entry;
 }
 
@@ -270,16 +280,18 @@ page_mmap(int fd, void *upage)
 			page_map_common(0, upage + pos, PAGE_WRITABLE);
 		if (entry == NULL) {
 			// TODO: unwind with page_munmap()
-			return pd;
+			goto err;
 		}
 		entry->type = PAGE_FILE_BACKED;
 		entry->file.mmap = mmap_new;
 		entry->file.fd = fd_new;
 		entry->file.pos = pos;
 	}
-	release_io_lock();
 
 	pd.id = mmap_new;
+
+err:
+	release_io_lock();
 	return pd;
 }
 
