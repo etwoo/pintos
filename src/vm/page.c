@@ -276,7 +276,21 @@ page_munmap(struct page_descriptor pd)
 			hash_delete(&t->vm.page_table, &entry->elem);
 		ASSERT(hashed != NULL);
 
-		// TODO: if dirty, flush page to disk before unmapping
+		void *kaddr = NULL;
+		if (pagedir_is_dirty(t->pagedir, entry->upage)) {
+			kaddr = pagedir_get_page(t->pagedir, entry->upage);
+			ASSERT(kaddr != NULL);
+			struct file *file = fd_to_file(entry->file.fd);
+			ASSERT(file != NULL);
+			acquire_io_lock();
+			file_seek(file, entry->file.pos);
+			const off_t eof = file_length(file);
+			const off_t bytes = file_write(file, kaddr, PGSIZE);
+			ASSERT(bytes == PGSIZE ||
+			       bytes + entry->file.pos == eof);
+			release_io_lock();
+		}
+
 		pagedir_clear_page(t->pagedir, entry->upage);
 
 		// TODO: free allocated page_entry; currently seems to cause
