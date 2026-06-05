@@ -559,7 +559,7 @@ load_segment(int fd,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* Get page of memory. Add it to the process's address space. */
-		if (page_read_bytes == PGSIZE) {
+		if (false && page_read_bytes == PGSIZE) { // TODO restore
 			const off_t pos = file_tell(file);
 			if (!page_map(fd, pos, upage, rw)) {
 				return false;
