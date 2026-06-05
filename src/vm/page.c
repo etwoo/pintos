@@ -55,6 +55,38 @@ page_less(const struct hash_elem *a_,
 	return pg_no(a->upage) < pg_no(b->upage);
 }
 
+static void
+page_destructor(struct hash_elem *e_, void *aux UNUSED)
+{
+	struct thread *t = thread_current();
+	struct page_entry *entry = hash_entry(e_, struct page_entry, elem);
+
+	if (entry->type == PAGE_ANONYMOUS || entry->rw == PAGE_READONLY) {
+		return;
+	}
+	ASSERT(entry->type == PAGE_FILE_BACKED && entry->rw == PAGE_WRITABLE);
+
+	if (pagedir_is_dirty(t->pagedir, entry->upage)) {
+		void *kaddr = pagedir_get_page(t->pagedir, entry->upage);
+		ASSERT(kaddr != NULL);
+		struct file *file = fd_to_file(entry->file.fd);
+		ASSERT(file != NULL);
+		acquire_io_lock();
+		file_seek(file, entry->file.pos);
+		const off_t eof = file_length(file);
+		const off_t bytes = file_write(file, kaddr, PGSIZE);
+		ASSERT(bytes == PGSIZE ||
+		       bytes + entry->file.pos == eof);
+		release_io_lock();
+	}
+
+	pagedir_clear_page(t->pagedir, entry->upage);
+
+	// TODO: free allocated page_entry; currently seems to cause
+	// weird page faults and crashes; not sure why
+	// free(entry);
+}
+
 void
 page_init(void)
 {
@@ -62,6 +94,14 @@ page_init(void)
 	ASSERT(!t->vm.initialized);
 	hash_init(&t->vm.page_table, page_hash, page_less, NULL);
 	t->vm.initialized = true;
+}
+
+void
+page_destroy(void)
+{
+	struct thread *t = thread_current();
+	ASSERT(t->vm.initialized);
+	hash_destroy(&t->vm.page_table, page_destructor);
 }
 
 static bool
@@ -275,27 +315,7 @@ page_munmap(struct page_descriptor pd)
 		struct hash_elem *hashed =
 			hash_delete(&t->vm.page_table, &entry->elem);
 		ASSERT(hashed != NULL);
-
-		void *kaddr = NULL;
-		if (pagedir_is_dirty(t->pagedir, entry->upage)) {
-			kaddr = pagedir_get_page(t->pagedir, entry->upage);
-			ASSERT(kaddr != NULL);
-			struct file *file = fd_to_file(entry->file.fd);
-			ASSERT(file != NULL);
-			acquire_io_lock();
-			file_seek(file, entry->file.pos);
-			const off_t eof = file_length(file);
-			const off_t bytes = file_write(file, kaddr, PGSIZE);
-			ASSERT(bytes == PGSIZE ||
-			       bytes + entry->file.pos == eof);
-			release_io_lock();
-		}
-
-		pagedir_clear_page(t->pagedir, entry->upage);
-
-		// TODO: free allocated page_entry; currently seems to cause
-		// weird page faults and crashes; not sure why
-		// free(entry);
+		page_destructor(hashed, NULL);
 	}
 
 	struct file *file = (got_fd == FD_INVALID) ? NULL : fd_to_file(got_fd);

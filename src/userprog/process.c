@@ -214,7 +214,8 @@ process_exit(int status)
 	const bool early_error_in_load = (status == EXIT_NO_LOAD);
 	status = early_error_in_load ? EXIT_EXCEPTION : status;
 
-	// TODO: flush dirty pages to disk before destroying pagedir
+	/* Flush dirty pages to disk, and clear address mappings. */
+	page_destroy();
 
 	/* Destroy the current process's page directory and switch back
 	   to the kernel-only page directory. */
