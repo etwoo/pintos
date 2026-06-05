@@ -34,7 +34,8 @@ struct page_entry {
 			off_t pos;
 		} file;
 	};
-	struct hash_elem elem; /* Hash element for page_table. */
+	struct hash_elem elem;        /* Hash element for page_table. */
+	struct list_elem munmap_elem; /* See page_munmap(). */
 };
 
 static unsigned
@@ -249,6 +250,9 @@ page_munmap(struct page_descriptor pd)
 	struct hash_iterator i = {0};
 	int got_fd = FD_INVALID;
 
+	struct list to_unmap;
+	list_init(&to_unmap);
+
 	hash_first(&i, &t->vm.page_table);
 	while (hash_next(&i)) {
 		struct page_entry *entry =
@@ -260,9 +264,24 @@ page_munmap(struct page_descriptor pd)
 			} else {
 				ASSERT(got_fd == entry->file.fd);
 			}
-			// TODO: flush dirty pages to disk
-			// TODO: remove mapping
+			list_push_back(&to_unmap, &entry->munmap_elem);
 		}
+	}
+
+	struct list_elem *e = list_begin(&to_unmap);
+	for (; e != list_end(&to_unmap); e = list_next(e)) {
+		struct page_entry *entry =
+			list_entry(e, struct page_entry, munmap_elem);
+		struct hash_elem *hashed =
+			hash_delete(&t->vm.page_table, &entry->elem);
+		ASSERT(hashed != NULL);
+
+		// TODO: if dirty, flush page to disk before unmapping
+		pagedir_clear_page(t->pagedir, entry->upage);
+
+		// TODO: free allocated page_entry; currently seems to cause
+		// weird page faults and crashes; not sure why
+		// free(entry);
 	}
 
 	struct file *file = (got_fd == FD_INVALID) ? NULL : fd_to_file(got_fd);
