@@ -571,6 +571,7 @@ load_segment(int fd,
 			}
 			ASSERT(page_read_bytes == 0);
 		} else {
+			// TODO: map last segment to EOF, less than PGSIZE
 			uint8_t *kpage = page_create(0, upage, rw);
 			if (kpage == NULL) {
 				return false;

@@ -70,7 +70,7 @@ page_fault_impl(void *uaddr, void **kpage_out)
 
 	struct page_entry key = {
 		.upage = pg_round_down(uaddr),
-		.rw = PAGE_WRITABLE,
+		.rw = PAGE_WRITABLE, // TODO rm, unused
 	};
 	struct hash_elem *e = hash_find(&t->vm.page_table, &key.elem);
 	if (e == NULL) {
@@ -133,6 +133,8 @@ page_fault_on(void *uaddr)
 static struct page_entry *
 page_map_common(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 {
+	ASSERT(pg_round_down(upage) == upage); /* Must be page-aligned. */
+
 	struct thread *t = thread_current();
 	ASSERT(t->vm.initialized);
 
