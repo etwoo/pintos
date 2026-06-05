@@ -61,14 +61,15 @@ page_destructor(struct hash_elem *e_, void *aux UNUSED)
 	struct thread *t = thread_current();
 	struct page_entry *entry = hash_entry(e_, struct page_entry, elem);
 
-	if (entry->type == PAGE_ANONYMOUS || entry->rw == PAGE_READONLY) {
-		return;
+	void *kaddr = pagedir_get_page(t->pagedir, entry->upage);
+	if (kaddr == NULL) {
+		/* This page was mapped but never faulted. */
+		goto done_with_fault_cleanup;
 	}
-	ASSERT(entry->type == PAGE_FILE_BACKED && entry->rw == PAGE_WRITABLE);
 
-	if (pagedir_is_dirty(t->pagedir, entry->upage)) {
-		void *kaddr = pagedir_get_page(t->pagedir, entry->upage);
-		ASSERT(kaddr != NULL);
+	if (entry->type == PAGE_FILE_BACKED &&
+	    pagedir_is_dirty(t->pagedir, entry->upage)) {
+		ASSERT(entry->rw == PAGE_WRITABLE);
 		struct file *file = fd_to_file(entry->file.fd);
 		ASSERT(file != NULL);
 		acquire_io_lock();
@@ -80,9 +81,9 @@ page_destructor(struct hash_elem *e_, void *aux UNUSED)
 	}
 
 	pagedir_clear_page(t->pagedir, entry->upage);
+	palloc_free_page(kaddr);
 
-	// TODO palloc_free_page()?
-
+done_with_fault_cleanup:
 	// TODO: free allocated page_entry; currently seems to cause
 	// weird page faults and crashes; not sure why
 	// free(entry);
