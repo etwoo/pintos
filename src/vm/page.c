@@ -206,18 +206,24 @@ page_mmap(int fd, void *upage)
 		.id = PAGE_DESCRIPTOR_ERROR,
 	};
 
-	struct file *file = fd_to_file(fd);
-	if (file == NULL) {
+	struct file *reopened = NULL;
+	acquire_io_lock();
+	{
+		struct file *file = fd_to_file(fd);
+		reopened = (file == NULL) ? NULL : file_reopen(file);
+	}
+	release_io_lock();
+
+	if (reopened == NULL) {
 		return pd;
 	}
 
+	const int fd_new = fd_register(reopened);
 	struct thread *t = thread_current();
 	const int mmap_new = t->vm.mmap_generator++;
 
 	acquire_io_lock();
-	const off_t to_restore = file_tell(file);
-
-	const off_t len = file_length(file);
+	const off_t len = file_length(reopened);
 	for (off_t pos = 0; pos < len; pos += PGSIZE) {
 		struct page_entry *entry =
 			page_map_common(0, upage + pos, PAGE_WRITABLE);
@@ -227,11 +233,9 @@ page_mmap(int fd, void *upage)
 		}
 		entry->type = PAGE_FILE_BACKED;
 		entry->file.mmap = mmap_new;
-		entry->file.fd = fd;
+		entry->file.fd = fd_new;
 		entry->file.pos = pos;
 	}
-
-	file_seek(file, to_restore);
 	release_io_lock();
 
 	pd.id = mmap_new;
@@ -243,6 +247,7 @@ page_munmap(struct page_descriptor pd)
 {
 	struct thread *t = thread_current();
 	struct hash_iterator i = {0};
+	int got_fd = FD_INVALID;
 
 	hash_first(&i, &t->vm.page_table);
 	while (hash_next(&i)) {
@@ -250,8 +255,21 @@ page_munmap(struct page_descriptor pd)
 			hash_entry(hash_cur(&i), struct page_entry, elem);
 		if (entry->type == PAGE_FILE_BACKED &&
 		    entry->file.mmap == pd.id) {
+			if (got_fd == FD_INVALID) {
+				got_fd = entry->file.fd;
+			} else {
+				ASSERT(got_fd == entry->file.fd);
+			}
 			// TODO: flush dirty pages to disk
 			// TODO: remove mapping
 		}
+	}
+
+	struct file *file = (got_fd == FD_INVALID) ? NULL : fd_to_file(got_fd);
+	if (file != NULL) {
+		fd_unregister(got_fd);
+		acquire_io_lock();
+		file_close(file);
+		release_io_lock();
 	}
 }
