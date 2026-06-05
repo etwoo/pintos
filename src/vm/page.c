@@ -106,67 +106,31 @@ page_destroy(void)
 }
 
 static bool
-page_fault_impl(void *uaddr, void **kpage_out)
+is_stack_access(struct intr_frame *f, void *uaddr)
 {
-	void *kpage = NULL;
-
-	struct thread *t = thread_current();
-	ASSERT(t->vm.initialized);
-
-	struct page_entry key = {
-		.upage = pg_round_down(uaddr),
-	};
-	struct hash_elem *e = hash_find(&t->vm.page_table, &key.elem);
-	if (e == NULL) {
-		goto err;
+	ASSERT(is_user_vaddr(uaddr));
+	if (f == NULL) {
+		return NULL;
 	}
 
-	struct page_entry *entry = hash_entry(e, struct page_entry, elem);
-	ASSERT(entry != NULL);
-
-	kpage = palloc_get_page(entry->flags | PAL_USER);
-	if (kpage == NULL) {
-		// TODO: evict? swap? pagedir_clear_page()?
-		goto err;
+	/* Per Pintos Project 3 guidance:
+	 *
+	 * User programs are buggy if they write to the stack below the stack
+	 * pointer [...] However, the 80x86 PUSH instruction checks access
+	 * permissions before it adjusts the stack pointer, so it may cause a
+	 * page fault 4 bytes below the stack pointer [...] Similarly, the
+	 * PUSHA instruction pushes 32 bytes at once, so it can fault 32 bytes
+	 * below the stack pointer. */
+	if (uaddr < f->esp - 32) {
+		return false;
 	}
 
-	if (entry->type == PAGE_FILE_BACKED) {
-		struct file *file = fd_to_file(entry->file.fd);
-		ASSERT(file != NULL);
-		ASSERT(intr_get_level() == INTR_ON);
-		acquire_io_lock();
-		const off_t to_restore = file_tell(file);
-		file_seek(file, entry->file.pos);
-		const off_t bytes = file_read(file, kpage, PGSIZE);
-		file_seek(file, to_restore);
-		release_io_lock();
-		if (bytes < PGSIZE) {
-			memset(kpage + bytes, 0, PGSIZE - bytes);
-		}
+	const size_t sz = PHYS_BASE - uaddr;
+	if (sz > 8 * 1024 * 1024) { /* 8MB stack limit */
+		return false;
 	}
 
-	ASSERT(pagedir_get_page(t->pagedir, key.upage) == NULL);
-	const bool writable = (entry->rw == PAGE_WRITABLE);
-	if (!pagedir_set_page(t->pagedir, key.upage, kpage, writable)) {
-		goto err;
-	}
-
-	if (kpage_out != NULL) {
-		*kpage_out = kpage;
-	}
 	return true;
-
-err:
-	if (kpage != NULL) {
-		palloc_free_page(kpage);
-	}
-	return false;
-}
-
-bool
-page_fault_on(void *uaddr)
-{
-	return page_fault_impl(uaddr, NULL);
 }
 
 static struct page_entry *
@@ -211,6 +175,82 @@ page_map_common(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 	return entry;
 }
 
+static bool
+page_fault_impl(struct intr_frame *f, void *uaddr, void **kpage_out)
+{
+	struct page_entry *entry = NULL;
+	void *kpage = NULL;
+
+	struct thread *t = thread_current();
+	ASSERT(t->vm.initialized);
+
+	struct page_entry key = {
+		.upage = pg_round_down(uaddr),
+	};
+	struct hash_elem *e = hash_find(&t->vm.page_table, &key.elem);
+	if (e != NULL) {
+		/* Found mapping registered by page_map_common(). */
+		entry = hash_entry(e, struct page_entry, elem);
+	} else if (is_stack_access(f, uaddr)) {
+		/* Register new mapping to accomodate stack growth. */
+		entry = page_map_common(PAL_ZERO, key.upage, PAGE_WRITABLE);
+		ASSERT(entry->type == PAGE_ANONYMOUS);
+	} else {
+		goto err;
+	}
+	ASSERT(entry != NULL);
+
+	kpage = palloc_get_page(entry->flags | PAL_USER);
+	if (kpage == NULL) {
+		// TODO: evict? swap? pagedir_clear_page()?
+		goto err;
+	}
+
+	switch (entry->type) {
+	case PAGE_ANONYMOUS:
+		// TODO: restore from swap (maybe stack frame)
+		break;
+	case PAGE_FILE_BACKED: {
+		struct file *file = fd_to_file(entry->file.fd);
+		ASSERT(file != NULL);
+		ASSERT(intr_get_level() == INTR_ON);
+		acquire_io_lock();
+		const off_t to_restore = file_tell(file);
+		file_seek(file, entry->file.pos);
+		const off_t bytes = file_read(file, kpage, PGSIZE);
+		file_seek(file, to_restore);
+		release_io_lock();
+		if (bytes < PGSIZE) {
+			memset(kpage + bytes, 0, PGSIZE - bytes);
+		}
+		break;
+	}
+	}
+
+	ASSERT(pagedir_get_page(t->pagedir, key.upage) == NULL);
+	const bool writable = (entry->rw == PAGE_WRITABLE);
+	if (!pagedir_set_page(t->pagedir, key.upage, kpage, writable)) {
+		goto err;
+	}
+
+	if (kpage_out != NULL) {
+		*kpage_out = kpage;
+	}
+	return true;
+
+err:
+	if (kpage != NULL) {
+		palloc_free_page(kpage);
+	}
+	return false;
+}
+
+bool
+page_fault_on(struct intr_frame *f, void *uaddr)
+{
+	return page_fault_impl(f, uaddr, NULL);
+}
+
 bool
 page_map(int fd, off_t pos, void *upage, enum page_rw rw)
 {
@@ -247,7 +287,7 @@ page_create(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 	}
 
 	void *kpage = NULL;
-	if (!page_fault_impl(upage, &kpage)) {
+	if (!page_fault_impl(NULL, upage, &kpage)) {
 		// TODO: on error, free() entry instead of waiting for exit()
 		return NULL;
 	}

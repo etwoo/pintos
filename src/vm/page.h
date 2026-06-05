@@ -24,6 +24,7 @@ struct page_descriptor {
 struct page_descriptor page_mmap(int fd, void *upage);
 void page_munmap(struct page_descriptor pd);
 
-bool page_fault_on(void *uaddr);
+struct intr_frame;
+bool page_fault_on(struct intr_frame *f, void *uaddr);
 
 #endif
