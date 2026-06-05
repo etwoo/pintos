@@ -17,6 +17,8 @@ enum page_type {
 	PAGE_FILE_BACKED,
 };
 
+static const int MMAP_ID_UNSET = -2;
+
 struct page_entry {
 	void *upage;
 	enum palloc_flags flags;
@@ -27,6 +29,7 @@ struct page_entry {
 			int swap_slot; // TODO
 		} anonymous;
 		struct {
+			int mmap;
 			int fd;
 			off_t pos;
 		} file;
@@ -166,6 +169,7 @@ page_map(int fd, off_t pos, void *upage, enum page_rw rw)
 	ASSERT(file != NULL);
 
 	entry->type = PAGE_FILE_BACKED;
+	entry->file.mmap = MMAP_ID_UNSET;
 	entry->file.fd = fd;
 	entry->file.pos = pos;
 	return true;
@@ -193,4 +197,61 @@ page_create(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 	}
 
 	return kpage;
+}
+
+struct page_descriptor
+page_mmap(int fd, void *upage)
+{
+	struct page_descriptor pd = {
+		.id = PAGE_DESCRIPTOR_ERROR,
+	};
+
+	struct file *file = fd_to_file(fd);
+	if (file == NULL) {
+		return pd;
+	}
+
+	struct thread *t = thread_current();
+	const int mmap_new = t->vm.mmap_generator++;
+
+	acquire_io_lock();
+	const off_t to_restore = file_tell(file);
+
+	const off_t len = file_length(file);
+	for (off_t pos = 0; pos < len; pos += PGSIZE) {
+		struct page_entry *entry =
+			page_map_common(0, upage + pos, PAGE_WRITABLE);
+		if (entry == NULL) {
+			// TODO: unwind with page_munmap()
+			return pd;
+		}
+		entry->type = PAGE_FILE_BACKED;
+		entry->file.mmap = mmap_new;
+		entry->file.fd = fd;
+		entry->file.pos = pos;
+	}
+
+	file_seek(file, to_restore);
+	release_io_lock();
+
+	pd.id = mmap_new;
+	return pd;
+}
+
+void
+page_munmap(struct page_descriptor pd)
+{
+	struct thread *t = thread_current();
+	struct hash_iterator i = {0};
+
+	hash_first(&i, &t->vm.page_table);
+	while (hash_next(&i)) {
+		struct page_entry *entry =
+			hash_entry(hash_cur(&i), struct page_entry, elem);
+		if (entry->type == PAGE_FILE_BACKED &&
+		    entry->file.mmap == pd.id) {
+			// TODO: flush dirty pages to disk
+			// TODO: remove mapping
+		}
+	}
 }

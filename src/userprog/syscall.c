@@ -11,6 +11,7 @@
 #include "userprog/io.h"
 #include "userprog/pagedir.h"
 #include "userprog/process.h"
+#include "vm/page.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -277,6 +278,25 @@ syscall_close(struct intr_frame *f, int *stack)
 }
 
 static void
+syscall_mmap(struct intr_frame *f, int *stack)
+{
+	const int fd = *stack++;
+	uintptr_t uaddr = *stack++;
+	// TODO: handle uaddr misalignment?
+	f->eax = page_mmap(fd, (void *)uaddr).id;
+}
+
+static void
+syscall_munmap(struct intr_frame *f, int *stack)
+{
+	const struct page_descriptor pd = {
+		.id = *stack++,
+	};
+	page_munmap(pd);
+	f->eax = IO_SUCCESS;
+}
+
+static void
 syscall_handler(struct intr_frame *f)
 {
 	int *kaddr = check_span_is_user_vaddr(f, f->esp, sizeof(int));
@@ -323,7 +343,11 @@ syscall_handler(struct intr_frame *f)
 		syscall_close(f, kaddr);
 		break;
 	case SYS_MMAP:
+		syscall_mmap(f, kaddr);
+		break;
 	case SYS_MUNMAP:
+		syscall_munmap(f, kaddr);
+		break;
 	case SYS_CHDIR:
 	case SYS_MKDIR:
 	case SYS_READDIR:
