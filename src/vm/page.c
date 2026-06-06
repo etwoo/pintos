@@ -211,6 +211,7 @@ page_fault_impl(struct intr_frame *f, void *uaddr, void **kpage_out)
 	enum palloc_flags flags = 0;
 	enum page_rw rw = PAGE_READONLY;
 	enum page_type type = PAGE_ANONYMOUS;
+	struct swap_slot swap = {0};
 	int fd = FD_INVALID;
 	off_t pos = 0;
 
@@ -238,8 +239,15 @@ page_fault_impl(struct intr_frame *f, void *uaddr, void **kpage_out)
 			flags = entry->flags;
 			rw = entry->rw;
 			type = entry->type;
-			fd = entry->file.fd;
-			pos = entry->file.pos;
+			switch (entry->type) {
+			case PAGE_ANONYMOUS:
+				swap = entry->anon.swap;
+				break;
+			case PAGE_FILE_BACKED:
+				fd = entry->file.fd;
+				pos = entry->file.pos;
+				break;
+			}
 		}
 
 		lock_release(&t->vm.lock);
@@ -251,13 +259,9 @@ page_fault_impl(struct intr_frame *f, void *uaddr, void **kpage_out)
 	void *kpage = frame_get_page(key.upage, flags, rw);
 	ASSERT(kpage != NULL);
 
-	switch (type) {
-	case PAGE_ANONYMOUS: {
-		// TODO: restore from swap (maybe stack frame)
-		// TODO: make swap slot available for use by others
-		break;
-	}
-	case PAGE_FILE_BACKED: {
+	if (type == PAGE_ANONYMOUS) {
+		swap_load(swap, kpage);
+	} else if (type == PAGE_FILE_BACKED) {
 		struct file *file = fd_to_file(fd);
 		ASSERT(file != NULL);
 		ASSERT(intr_get_level() == INTR_ON);
@@ -270,8 +274,8 @@ page_fault_impl(struct intr_frame *f, void *uaddr, void **kpage_out)
 		if (bytes < PGSIZE) {
 			memset(kpage + bytes, 0, PGSIZE - bytes);
 		}
-		break;
-	}
+	} else {
+		ASSERT(0 && "Invalid value for enum page_type");
 	}
 
 	if (kpage_out != NULL) {

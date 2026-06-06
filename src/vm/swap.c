@@ -74,6 +74,8 @@ swap_save(void *kpage)
 void
 swap_load(struct swap_slot s, void *kpage)
 {
+	ASSERT(swap_slot_is_valid(s));
+
 	const block_sector_t start = s.slot * (PGSIZE / BLOCK_SECTOR_SIZE);
 	ASSERT(PGSIZE % BLOCK_SECTOR_SIZE == 0);
 
