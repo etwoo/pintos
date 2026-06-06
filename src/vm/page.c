@@ -7,7 +7,7 @@
 #include "threads/vaddr.h"
 #include "userprog/fd.h"
 #include "userprog/io.h"
-#include "userprog/pagedir.h" // TODO: remove, hide behind frame.h API?
+#include "userprog/pagedir.h"
 #include "vm/frame.h"
 
 #include <string.h>
@@ -58,8 +58,10 @@ page_less(const struct hash_elem *a_,
 static void
 page_destructor(struct hash_elem *e_, void *aux UNUSED)
 {
-	struct thread *t = thread_current();
 	struct page_entry *entry = hash_entry(e_, struct page_entry, elem);
+
+	struct thread *t = thread_current();
+	ASSERT(lock_held_by_current_thread(&t->vm.lock));
 
 	void *kaddr = pagedir_get_page(t->pagedir, entry->upage);
 	if (kaddr == NULL) {
@@ -233,6 +235,7 @@ page_fault_impl(struct intr_frame *f, void *uaddr, void **kpage_out)
 	switch (type) {
 	case PAGE_ANONYMOUS: {
 		// TODO: restore from swap (maybe stack frame)
+		// TODO: make swap slot available for use by others
 		break;
 	}
 	case PAGE_FILE_BACKED: {
@@ -413,4 +416,46 @@ page_munmap(struct page_descriptor pd)
 		file_close(file);
 		release_io_lock();
 	}
+}
+
+struct page_evict_args {
+	tid_t owner;
+	void *upage;
+	int swap_slot;
+};
+
+static void
+page_evict_from_owner(struct thread *t, void *aux)
+{
+	struct page_evict_args *args = aux;
+	if (t->tid != args->owner) {
+		return;
+	}
+
+	lock_acquire(&t->vm.lock);
+
+	// TODO: consolidate block below with page_destructor()?
+	void *kpage = pagedir_get_page(t->pagedir, args->upage);
+	pagedir_clear_page(t->pagedir, args->upage);
+	palloc_free_page(kpage);
+
+	lock_release(&t->vm.lock);
+
+	// TODO: update this thread's page_table with swap slot reference
+}
+
+void
+page_evict(tid_t owner, void *upage)
+{
+	int swap_slot = 0; // TODO: write upage to swap if PAGE_ANONYMOUS
+
+	// TODO: do we need to write anonymous memory to swap if page was never
+	// accessed via either kaddr/uaddr aliases (PTE_A)? maybe not?
+
+	struct page_evict_args args = {
+		.owner = owner,
+		.upage = upage,
+		.swap_slot = swap_slot,
+	};
+	thread_foreach(page_evict_from_owner, &args);
 }

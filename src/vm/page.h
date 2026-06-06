@@ -3,6 +3,7 @@
 
 #include "filesys/off_t.h"
 #include "threads/palloc.h"
+#include "threads/thread.h"
 
 enum page_rw {
 	PAGE_READONLY,
@@ -26,5 +27,7 @@ void page_munmap(struct page_descriptor pd);
 
 struct intr_frame;
 bool page_fault_on(struct intr_frame *f, void *uaddr);
+
+void page_evict(tid_t owner, void *upage);
 
 #endif

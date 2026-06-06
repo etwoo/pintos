@@ -1,5 +1,6 @@
 #include "vm/frame.h"
 
+#include "threads/malloc.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
 #include "userprog/pagedir.h"
@@ -18,33 +19,16 @@
 // evict, so be sure to pin pages no longer than necessary, and avoid pinning
 // pages when it is not necessary.
 
-struct frame_table_entry {
-	void *uaddr;
-	uintptr_t *pte; // TODO: ptov(*pte) == kaddr, for reverse-mapping
-	int atime;      /* Approximate last access time, in timer ticks. */
-	int pinned;     // TODO: reference count for pinning uaddr/frame
-	struct list elem;
+struct frame {
+	tid_t owner;
+	void *kpage;
+	void *upage;
+	struct list_elem elem;
 };
 
-// TODO: insert new value, with last_access set to sentinel, like INT_MIN
-// TODO: evict entry with earliest (minimum) last_access
-//
-// .... but note that atime is a lower bound
-// accordingly, check if page has PTE_A, and if so, update+clear PTE_A
-// (pop+push onto list to maintain sort?) and update atime (estimate), then
-// keep looking for next page with low atime basically, seek til we find lowest
-// "clean" atime (no PTE_A bit set)
-//
-// TODO: touch existing value -- pop, update_last access, push, clear PTE_A ..?
-// TODO: if touch existing value through kaddr, use frame.uaddr to get reverse
-//       mapping and update access bit for user alias as well
 struct frame_table {
 	struct lock lock;
 	struct list table;
-	struct {
-		struct hash by_uaddr; /* Lookup by user address of frame.   */
-		struct hash by_kaddr; /* Lookup by kernel address of frame. */
-	} aliasing;
 };
 
 static struct frame_table ft; /* frames that contain a user page. */
@@ -56,23 +40,69 @@ frame_init(void)
 	list_init(&ft.table);
 }
 
+static void *
+frame_get_page_maybe_swap(enum palloc_flags flags)
+{
+	void *kpage = palloc_get_page(flags | PAL_USER);
+	if (kpage != NULL) {
+		return kpage;
+	}
+
+	tid_t victim_tid = TID_ERROR;
+	void *victim_upage = NULL;
+	{
+		lock_acquire(&ft.lock);
+		ASSERT(!list_empty(&ft.table));
+		// TODO: second-chance replacement instead of pure FIFO
+		// TODO: avoid kpages in-use by syscall handler; pinning?
+		struct list_elem *e = list_pop_front(&ft.table);
+		struct frame *fr = list_entry(e, struct frame, elem);
+		victim_tid = fr->owner;
+		victim_upage = fr->upage;
+		lock_release(&ft.lock);
+		free(fr);
+	}
+	page_evict(victim_tid, victim_upage);
+
+	// TODO: handle other thread racing, allocating between when we free up
+	// a page and when we allocate ourselves
+	//
+	// reusing an existing kpage is complicated because process_exit()
+	// deallocates via page_destructor() and pagedir_destroy(); seems
+	// simpler to avoid lifetime issues
+	kpage = palloc_get_page(flags | PAL_USER);
+	ASSERT(kpage != NULL && "Out-of-memory even after swapping");
+	return kpage;
+}
+
 void *
 frame_get_page(void *upage, enum palloc_flags flags, enum page_rw rw)
 {
-	void *kpage = palloc_get_page(flags | PAL_USER);
-	if (kpage == NULL) {
-		// TODO: swap a page, try alloc again, assert on 2nd fail
-		ASSERT(0 && "palloc_get_page() failed, swap not implemented");
-	}
-
 	struct thread *t = thread_current();
 	ASSERT(pagedir_get_page(t->pagedir, upage) == NULL);
+
+	struct frame *fr = malloc(sizeof(*fr));
+	if (fr == NULL) {
+		return NULL;
+	}
+
+	void *kpage = frame_get_page_maybe_swap(flags);
+	ASSERT(kpage != NULL);
+
+	fr->owner = t->tid;
+	fr->kpage = kpage;
+	fr->upage = upage;
 
 	const bool writable = (rw == PAGE_WRITABLE);
 	if (!pagedir_set_page(t->pagedir, upage, kpage, writable)) {
 		palloc_free_page(kpage);
+		free(fr);
 		return NULL;
 	}
+
+	lock_acquire(&ft.lock);
+	list_push_back(&ft.table, &fr->elem);
+	lock_release(&ft.lock);
 
 	return kpage;
 }
