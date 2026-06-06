@@ -260,7 +260,9 @@ page_fault_impl(struct intr_frame *f, void *uaddr, void **kpage_out)
 	ASSERT(kpage != NULL);
 
 	if (type == PAGE_ANONYMOUS) {
-		swap_load(swap, kpage);
+		if (swap_slot_is_valid(swap)) {
+			swap_load(swap, kpage);
+		}
 	} else if (type == PAGE_FILE_BACKED) {
 		struct file *file = fd_to_file(fd);
 		ASSERT(file != NULL);
