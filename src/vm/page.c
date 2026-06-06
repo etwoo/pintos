@@ -9,6 +9,7 @@
 #include "userprog/io.h"
 #include "userprog/pagedir.h"
 #include "vm/frame.h"
+#include "vm/swap.h"
 
 #include <string.h>
 
@@ -26,8 +27,8 @@ struct page_entry {
 	enum page_type type;
 	union {
 		struct {
-			int swap_slot; // TODO
-		} anonymous;
+			struct swap_slot swap;
+		} anon;
 		struct {
 			int mmap;
 			int fd;
@@ -56,15 +57,15 @@ page_less(const struct hash_elem *a_,
 }
 
 static void
-page_destructor(struct hash_elem *e_, void *aux UNUSED)
+page_evict_prepare(struct hash_elem *e_, bool swap_anonymous_memory)
 {
 	struct page_entry *entry = hash_entry(e_, struct page_entry, elem);
 
 	struct thread *t = thread_current();
 	ASSERT(lock_held_by_current_thread(&t->vm.lock));
 
-	void *kaddr = pagedir_get_page(t->pagedir, entry->upage);
-	if (kaddr == NULL) {
+	void *kpage = pagedir_get_page(t->pagedir, entry->upage);
+	if (kpage == NULL) {
 		/* This page was mapped but never faulted. */
 		goto done_with_fault_cleanup;
 	}
@@ -77,18 +78,35 @@ page_destructor(struct hash_elem *e_, void *aux UNUSED)
 		acquire_io_lock();
 		file_seek(file, entry->file.pos);
 		const off_t eof = file_length(file);
-		const off_t bytes = file_write(file, kaddr, PGSIZE);
+		const off_t bytes = file_write(file, kpage, PGSIZE);
 		ASSERT(bytes == PGSIZE || bytes + entry->file.pos == eof);
 		release_io_lock();
 	}
 
+	if (swap_anonymous_memory && /* Caller opts-in to swap. */
+	    entry->type == PAGE_ANONYMOUS &&
+	    pagedir_is_accessed(t->pagedir, entry->upage)) {
+		struct swap_slot s = swap_save(kpage);
+		if (swap_slot_is_valid(s)) {
+			entry->anon.swap = s;
+		} else {
+			swap_slot_unset(&entry->anon.swap);
+		}
+	}
+
 	pagedir_clear_page(t->pagedir, entry->upage);
-	palloc_free_page(kaddr);
+	palloc_free_page(kpage);
 
 done_with_fault_cleanup:
 	// TODO: free allocated page_entry; currently seems to cause
 	// weird page faults and crashes; not sure why
 	// free(entry);
+}
+
+static void
+page_destructor(struct hash_elem *e_, void *aux UNUSED)
+{
+	page_evict_prepare(e_, /* swap_anonymous_memory */ false);
 }
 
 void
@@ -178,6 +196,7 @@ page_map_common(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 	entry->flags = extra_flags;
 	entry->rw = rw;
 	entry->type = PAGE_ANONYMOUS;
+	swap_slot_unset(&entry->anon.swap);
 	struct hash_elem *e = hash_insert(&t->vm.page_table, &entry->elem);
 	ASSERT(e == NULL); /* Guaranteed by earlier hash_find(). */
 	return entry;
@@ -404,7 +423,7 @@ page_munmap(struct page_descriptor pd)
 		struct hash_elem *hashed =
 			hash_delete(&t->vm.page_table, &entry->elem);
 		ASSERT(hashed != NULL);
-		page_destructor(hashed, NULL);
+		page_evict_prepare(hashed, /* swap_anonymous_memory */ false);
 	}
 
 	lock_release(&t->vm.lock);
@@ -421,7 +440,6 @@ page_munmap(struct page_descriptor pd)
 struct page_evict_args {
 	tid_t owner;
 	void *upage;
-	int swap_slot;
 };
 
 static void
@@ -432,30 +450,27 @@ page_evict_from_owner(struct thread *t, void *aux)
 		return;
 	}
 
+	// TODO: not safe to acquire locks and reenable interrupts inside
+	// thread_foreach() callback; may lead to invalid all_list iterator?
 	lock_acquire(&t->vm.lock);
 
-	// TODO: consolidate block below with page_destructor()?
-	void *kpage = pagedir_get_page(t->pagedir, args->upage);
-	pagedir_clear_page(t->pagedir, args->upage);
-	palloc_free_page(kpage);
+	struct page_entry key = {
+		.upage = args->upage,
+	};
+	struct hash_elem *found = hash_find(&t->vm.page_table, &key.elem);
+	if (found != NULL) {
+		page_evict_prepare(found, /* swap_anonymous_memory */ true);
+	}
 
 	lock_release(&t->vm.lock);
-
-	// TODO: update this thread's page_table with swap slot reference
 }
 
 void
 page_evict(tid_t owner, void *upage)
 {
-	int swap_slot = 0; // TODO: write upage to swap if PAGE_ANONYMOUS
-
-	// TODO: do we need to write anonymous memory to swap if page was never
-	// accessed via either kaddr/uaddr aliases (PTE_A)? maybe not?
-
 	struct page_evict_args args = {
 		.owner = owner,
 		.upage = upage,
-		.swap_slot = swap_slot,
 	};
 	thread_foreach(page_evict_from_owner, &args);
 }
