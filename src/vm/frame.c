@@ -21,7 +21,6 @@
 
 struct frame {
 	tid_t owner;
-	void *kpage;
 	void *upage;
 	struct list_elem elem;
 };
@@ -90,7 +89,6 @@ frame_get_page(void *upage, enum palloc_flags flags, enum page_rw rw)
 	ASSERT(kpage != NULL);
 
 	fr->owner = t->tid;
-	fr->kpage = kpage;
 	fr->upage = upage;
 
 	const bool writable = (rw == PAGE_WRITABLE);
