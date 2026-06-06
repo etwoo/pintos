@@ -1,6 +1,8 @@
 #include "vm/frame.h"
 
 #include "threads/synch.h"
+#include "threads/thread.h"
+#include "userprog/pagedir.h"
 
 #include <hash.h>
 #include <list.h>
@@ -52,4 +54,25 @@ frame_init(void)
 {
 	lock_init(&ft.lock);
 	list_init(&ft.table);
+}
+
+void *
+frame_get_page(void *upage, enum palloc_flags flags, enum page_rw rw)
+{
+	void *kpage = palloc_get_page(flags | PAL_USER);
+	if (kpage == NULL) {
+		// TODO: swap a page, try alloc again, assert on 2nd fail
+		ASSERT(0 && "palloc_get_page() failed, swap not implemented");
+	}
+
+	struct thread *t = thread_current();
+	ASSERT(pagedir_get_page(t->pagedir, upage) == NULL);
+
+	const bool writable = (rw == PAGE_WRITABLE);
+	if (!pagedir_set_page(t->pagedir, upage, kpage, writable)) {
+		palloc_free_page(kpage);
+		return NULL;
+	}
+
+	return kpage;
 }

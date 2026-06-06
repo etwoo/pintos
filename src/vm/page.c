@@ -7,7 +7,7 @@
 #include "threads/vaddr.h"
 #include "userprog/fd.h"
 #include "userprog/io.h"
-#include "userprog/pagedir.h"
+#include "userprog/pagedir.h" // TODO: remove, hide behind frame.h API?
 #include "vm/frame.h"
 
 #include <string.h>
@@ -184,7 +184,6 @@ page_map_common(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 static bool
 page_fault_impl(struct intr_frame *f, void *uaddr, void **kpage_out)
 {
-	struct thread *t = thread_current();
 	struct page_entry key = {
 		.upage = pg_round_down(uaddr),
 	};
@@ -196,6 +195,7 @@ page_fault_impl(struct intr_frame *f, void *uaddr, void **kpage_out)
 
 	bool got_entry_fields = false;
 	{
+		struct thread *t = thread_current();
 		lock_acquire(&t->vm.lock);
 		ASSERT(t->vm.initialized);
 
@@ -227,17 +227,14 @@ page_fault_impl(struct intr_frame *f, void *uaddr, void **kpage_out)
 		return false;
 	}
 
-	void *kpage = palloc_get_page(flags | PAL_USER);
-	if (kpage == NULL) {
-		ASSERT(0 && "palloc_get_page() failed, swap not implemented");
-		// TODO: evict? swap? pagedir_clear_page()?
-		return false;
-	}
+	void *kpage = frame_get_page(key.upage, flags, rw);
+	ASSERT(kpage != NULL);
 
 	switch (type) {
-	case PAGE_ANONYMOUS:
+	case PAGE_ANONYMOUS: {
 		// TODO: restore from swap (maybe stack frame)
 		break;
+	}
 	case PAGE_FILE_BACKED: {
 		struct file *file = fd_to_file(fd);
 		ASSERT(file != NULL);
@@ -253,13 +250,6 @@ page_fault_impl(struct intr_frame *f, void *uaddr, void **kpage_out)
 		}
 		break;
 	}
-	}
-
-	ASSERT(pagedir_get_page(t->pagedir, key.upage) == NULL);
-	const bool writable = (rw == PAGE_WRITABLE);
-	if (!pagedir_set_page(t->pagedir, key.upage, kpage, writable)) {
-		palloc_free_page(kpage);
-		return false;
 	}
 
 	if (kpage_out != NULL) {
