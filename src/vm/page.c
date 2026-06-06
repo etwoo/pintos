@@ -203,6 +203,7 @@ page_fault_impl(struct intr_frame *f, void *uaddr, void **kpage_out)
 
 	kpage = palloc_get_page(entry->flags | PAL_USER);
 	if (kpage == NULL) {
+		ASSERT(0 && "palloc_get_page() failed, swap not implemented");
 		// TODO: evict? swap? pagedir_clear_page()?
 		goto err;
 	}
