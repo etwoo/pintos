@@ -7,6 +7,7 @@
 #include <bitmap.h>
 
 #define SWAP_SLOT_INVALID SIZE_MAX
+#define BLOCKS_PER_PAGE (PGSIZE / BLOCK_SECTOR_SIZE)
 
 struct swap_partition {
 	struct lock lock;
@@ -59,11 +60,12 @@ swap_save(void *kpage)
 		};
 	}
 
-	const block_sector_t start = chosen * (PGSIZE / BLOCK_SECTOR_SIZE);
+	const block_sector_t start = chosen * BLOCKS_PER_PAGE;
 	ASSERT(PGSIZE % BLOCK_SECTOR_SIZE == 0);
 
-	for (size_t i = 0; i < PGSIZE; i += BLOCK_SECTOR_SIZE) {
-		block_write(swap.block_device, start + i, kpage + i);
+	for (size_t blocks = 0; blocks < BLOCKS_PER_PAGE; ++blocks) {
+		const size_t bytes = blocks * BLOCK_SECTOR_SIZE;
+		block_write(swap.block_device, start + blocks, kpage + bytes);
 	}
 
 	return (struct swap_slot){
@@ -76,11 +78,12 @@ swap_load(struct swap_slot s, void *kpage)
 {
 	ASSERT(swap_slot_is_valid(s));
 
-	const block_sector_t start = s.slot * (PGSIZE / BLOCK_SECTOR_SIZE);
+	const block_sector_t start = s.slot * BLOCKS_PER_PAGE;
 	ASSERT(PGSIZE % BLOCK_SECTOR_SIZE == 0);
 
-	for (size_t i = 0; i < PGSIZE; i += BLOCK_SECTOR_SIZE) {
-		block_read(swap.block_device, start + i, kpage + i);
+	for (size_t blocks = 0; blocks < BLOCKS_PER_PAGE; ++blocks) {
+		const size_t bytes = blocks * BLOCK_SECTOR_SIZE;
+		block_read(swap.block_device, start + blocks, kpage + bytes);
 	}
 
 	lock_acquire(&swap.lock);

@@ -83,9 +83,8 @@ page_evict_prepare(struct hash_elem *e_, bool swap_anonymous_memory)
 		release_io_lock();
 	}
 
-	if (swap_anonymous_memory && /* Caller opts-in to swap. */
-	    entry->type == PAGE_ANONYMOUS &&
-	    pagedir_is_accessed(t->pagedir, entry->upage)) {
+	// TODO: also filter by pagedir_is_accessed()?
+	if (swap_anonymous_memory && entry->type == PAGE_ANONYMOUS) {
 		struct swap_slot s = swap_save(kpage);
 		if (swap_slot_is_valid(s)) {
 			entry->anon.swap = s;
@@ -458,6 +457,7 @@ page_evict_from_owner(struct thread *t, void *aux)
 
 	// TODO: not safe to acquire locks and reenable interrupts inside
 	// thread_foreach() callback; may lead to invalid all_list iterator?
+	enum intr_level old_level = intr_enable(); // TODO rm
 	lock_acquire(&t->vm.lock);
 
 	struct page_entry key = {
@@ -469,6 +469,7 @@ page_evict_from_owner(struct thread *t, void *aux)
 	}
 
 	lock_release(&t->vm.lock);
+	intr_set_level(old_level);
 }
 
 void
@@ -478,5 +479,7 @@ page_evict(tid_t owner, void *upage)
 		.owner = owner,
 		.upage = upage,
 	};
+	enum intr_level old_level = intr_disable(); // TODO rm
 	thread_foreach(page_evict_from_owner, &args);
+	intr_set_level(old_level);
 }
