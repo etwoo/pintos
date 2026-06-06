@@ -345,7 +345,8 @@ struct Elf32_Phdr {
 
 static bool setup_stack(void **esp, void **kpage);
 static bool validate_segment(const struct Elf32_Phdr *, struct file *);
-static bool load_segment(struct file *file,
+static bool load_segment(int fd,
+                         struct file *file,
                          off_t ofs,
                          uint8_t *upage,
                          uint32_t read_bytes,
@@ -380,6 +381,8 @@ load(const char *file_name, void (**eip)(void), void **esp, void **kpage)
 		printf("load: %s: open failed\n", file_name);
 		goto done;
 	}
+
+	const int fd = fd_register(file);
 
 	/* Read and verify executable header. */
 	if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr ||
@@ -441,7 +444,8 @@ load(const char *file_name, void (**eip)(void), void **esp, void **kpage)
 						page_offset + phdr.p_memsz,
 						PGSIZE);
 				}
-				if (!load_segment(file,
+				if (!load_segment(fd,
+				                  file,
 				                  file_page,
 				                  (void *)mem_page,
 				                  read_bytes,
@@ -464,7 +468,6 @@ load(const char *file_name, void (**eip)(void), void **esp, void **kpage)
 	success = true;
 
 	/* On successful load(), deny writes to executable file until exit(). */
-	(void)fd_register(file);
 	file_deny_write(file);
 
 done:
@@ -474,8 +477,6 @@ done:
 }
 
 /* load() helpers. */
-
-static bool install_page(void *upage, void *kpage, bool writable);
 
 /* Checks whether PHDR describes a valid, loadable segment in
    FILE and returns true if so, false otherwise. */
@@ -537,7 +538,8 @@ validate_segment(const struct Elf32_Phdr *phdr, struct file *file)
    Return true if successful, false if a memory allocation error
    or disk read error occurs. */
 static bool
-load_segment(struct file *file,
+load_segment(int fd,
+             struct file *file,
              off_t ofs,
              uint8_t *upage,
              uint32_t read_bytes,
@@ -548,6 +550,7 @@ load_segment(struct file *file,
 	ASSERT(pg_ofs(upage) == 0);
 	ASSERT(ofs % PGSIZE == 0);
 	ASSERT(io_lock_held_by_current_thread());
+	const enum page_rw rw = writable ? PAGE_WRITABLE : PAGE_READONLY;
 
 	file_seek(file, ofs);
 	while (read_bytes > 0 || zero_bytes > 0) {
@@ -558,23 +561,30 @@ load_segment(struct file *file,
 			read_bytes < PGSIZE ? read_bytes : PGSIZE;
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-		/* Get a page of memory. */
-		uint8_t *kpage = palloc_get_page(PAL_USER);
-		if (kpage == NULL)
-			return false;
-
-		/* Load this page. */
-		if (file_read(file, kpage, page_read_bytes) !=
-		    (int)page_read_bytes) {
-			palloc_free_page(kpage);
-			return false;
-		}
-		memset(kpage + page_read_bytes, 0, page_zero_bytes);
-
-		/* Add the page to the process's address space. */
-		if (!install_page(upage, kpage, writable)) {
-			palloc_free_page(kpage);
-			return false;
+		/* Get page of memory. Add it to the process's address space. */
+		if (false && page_read_bytes == PGSIZE) { // TODO restore
+			const off_t pos = file_tell(file);
+			if (!page_map(fd, pos, upage, rw)) {
+				return false;
+			}
+			file_seek(file, pos + page_read_bytes);
+		} else if (false && page_zero_bytes == PGSIZE) { // TODO restore
+			if (!page_map_zero(upage, rw)) {
+				return false;
+			}
+			ASSERT(page_read_bytes == 0);
+		} else {
+			// TODO: map last segment to EOF, less than PGSIZE
+			uint8_t *kpage = page_create(0, upage, rw);
+			if (kpage == NULL) {
+				return false;
+			}
+			/* Load this page. */
+			if (file_read(file, kpage, page_read_bytes) !=
+			    (int)page_read_bytes) {
+				return false;
+			}
+			memset(kpage + page_read_bytes, 0, page_zero_bytes);
 		}
 
 		/* Advance. */
@@ -590,40 +600,16 @@ load_segment(struct file *file,
 static bool
 setup_stack(void **esp, void **kpage)
 {
-	bool success = false;
-
 	ASSERT(kpage != NULL && *kpage == NULL);
-	*kpage = palloc_get_page(PAL_USER | PAL_ZERO);
-	if (*kpage != NULL) {
-		success = install_page(((uint8_t *)PHYS_BASE) - PGSIZE,
-		                       *kpage,
-		                       true);
-		if (success)
-			*esp = PHYS_BASE;
-		else
-			palloc_free_page(*kpage);
+	void *upage = PHYS_BASE - PGSIZE;
+
+	*kpage = page_create(PAL_ZERO, upage, PAGE_WRITABLE);
+	if (*kpage == NULL) {
+		return false;
 	}
-	return success;
-}
 
-/* Adds a mapping from user virtual address UPAGE to kernel
-   virtual address KPAGE to the page table.
-   If WRITABLE is true, the user process may modify the page;
-   otherwise, it is read-only.
-   UPAGE must not already be mapped.
-   KPAGE should probably be a page obtained from the user pool
-   with palloc_get_page().
-   Returns true on success, false if UPAGE is already mapped or
-   if memory allocation fails. */
-static bool
-install_page(void *upage, void *kpage, bool writable)
-{
-	struct thread *t = thread_current();
-
-	/* Verify that there's not already a page at that virtual
-	   address, then map our page there. */
-	return (pagedir_get_page(t->pagedir, upage) == NULL &&
-	        pagedir_set_page(t->pagedir, upage, kpage, writable));
+	*esp = PHYS_BASE;
+	return true;
 }
 
 struct stack_layout {
