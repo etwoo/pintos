@@ -7,7 +7,7 @@
 
 #include <string.h>
 
-#define SIZE 1479585 // passes at 1479584, fails at 1479585
+#define SIZE (2 * 1024 * 1024)
 
 static char buf[SIZE];
 
