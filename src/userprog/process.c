@@ -16,6 +16,7 @@
 #include "userprog/io.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
+#include "vm/frame.h"
 #include "vm/page.h"
 
 #include <array.h>
@@ -216,6 +217,7 @@ process_exit(int status)
 
 	/* Flush dirty pages to disk, and clear address mappings. */
 	page_destroy();
+	frame_clear(cur->tid);
 
 	/* Destroy the current process's page directory and switch back
 	   to the kernel-only page directory. */

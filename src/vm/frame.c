@@ -104,3 +104,27 @@ frame_get_page(void *upage, enum palloc_flags flags, enum page_rw rw)
 
 	return kpage;
 }
+
+void
+frame_clear(tid_t tid)
+{
+	struct list to_save;
+	list_init(&to_save);
+
+	lock_acquire(&ft.lock);
+
+	while (!list_empty(&ft.table)) {
+		struct list_elem *e = list_pop_front(&ft.table);
+		struct frame *fr = list_entry(e, struct frame, elem);
+		if (fr->owner == tid) {
+			free(fr);
+		} else {
+			list_push_back(&to_save, e);
+		}
+	}
+
+	list_splice(list_begin(&ft.table),
+	            list_begin(&to_save),
+	            list_end(&to_save));
+	lock_release(&ft.lock);
+}
