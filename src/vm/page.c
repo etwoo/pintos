@@ -57,12 +57,12 @@ page_less(const struct hash_elem *a_,
 }
 
 static void
-page_evict_prepare(struct hash_elem *e_, bool swap_anonymous_memory)
+page_evict_prepare(struct thread *t,
+                   struct hash_elem *e_,
+                   bool swap_anonymous_memory)
 {
-	struct page_entry *entry = hash_entry(e_, struct page_entry, elem);
-
-	struct thread *t = thread_current();
 	ASSERT(lock_held_by_current_thread(&t->vm.lock));
+	struct page_entry *entry = hash_entry(e_, struct page_entry, elem);
 
 	void *kpage = pagedir_get_page(t->pagedir, entry->upage);
 	if (kpage == NULL) {
@@ -105,7 +105,8 @@ done_with_fault_cleanup:
 static void
 page_destructor(struct hash_elem *e_, void *aux UNUSED)
 {
-	page_evict_prepare(e_, /* swap_anonymous_memory */ false);
+	struct thread *t = thread_current();
+	page_evict_prepare(t, e_, /* swap_anonymous_memory */ false);
 }
 
 void
@@ -425,10 +426,10 @@ page_munmap(struct page_descriptor pd)
 	for (; e != list_end(&to_unmap); e = list_next(e)) {
 		struct page_entry *entry =
 			list_entry(e, struct page_entry, munmap_elem);
-		struct hash_elem *hashed =
+		struct hash_elem *hash =
 			hash_delete(&t->vm.page_table, &entry->elem);
-		ASSERT(hashed != NULL);
-		page_evict_prepare(hashed, /* swap_anonymous_memory */ false);
+		ASSERT(hash != NULL);
+		page_evict_prepare(t, hash, /* swap_anonymous_memory */ false);
 	}
 
 	lock_release(&t->vm.lock);
@@ -465,7 +466,7 @@ page_evict_from_owner(struct thread *t, void *aux)
 	};
 	struct hash_elem *found = hash_find(&t->vm.page_table, &key.elem);
 	if (found != NULL) {
-		page_evict_prepare(found, /* swap_anonymous_memory */ true);
+		page_evict_prepare(t, found, /* swap_anonymous_memory */ true);
 	}
 
 	lock_release(&t->vm.lock);
