@@ -93,17 +93,21 @@ void
 page_init(void)
 {
 	struct thread *t = thread_current();
+	lock_acquire(&t->vm.lock);
 	ASSERT(!t->vm.initialized);
 	hash_init(&t->vm.page_table, page_hash, page_less, NULL);
 	t->vm.initialized = true;
+	lock_release(&t->vm.lock);
 }
 
 void
 page_destroy(void)
 {
 	struct thread *t = thread_current();
+	lock_acquire(&t->vm.lock);
 	ASSERT(t->vm.initialized);
 	hash_destroy(&t->vm.page_table, page_destructor);
+	lock_release(&t->vm.lock);
 }
 
 static bool
@@ -137,6 +141,10 @@ is_stack_access(struct intr_frame *f, void *uaddr)
 static struct page_entry *
 page_map_common(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 {
+	struct thread *t = thread_current();
+	ASSERT(t->vm.initialized);
+	ASSERT(lock_held_by_current_thread(&t->vm.lock));
+
 	if (upage == NULL) {
 		/* Reject mapping at address zero. */
 		return NULL;
@@ -146,9 +154,6 @@ page_map_common(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 		/* Reject any uaddr not aligned on a page boundary. */
 		return NULL;
 	}
-
-	struct thread *t = thread_current();
-	ASSERT(t->vm.initialized);
 
 	struct hash_elem *collision = NULL;
 	{
@@ -179,46 +184,67 @@ page_map_common(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 static bool
 page_fault_impl(struct intr_frame *f, void *uaddr, void **kpage_out)
 {
-	struct page_entry *entry = NULL;
-	void *kpage = NULL;
-
 	struct thread *t = thread_current();
-	ASSERT(t->vm.initialized);
-
 	struct page_entry key = {
 		.upage = pg_round_down(uaddr),
 	};
-	struct hash_elem *e = hash_find(&t->vm.page_table, &key.elem);
-	if (e != NULL) {
-		/* Found mapping registered by page_map_common(). */
-		entry = hash_entry(e, struct page_entry, elem);
-	} else if (is_stack_access(f, uaddr)) {
-		/* Register new mapping to accomodate stack growth. */
-		entry = page_map_common(PAL_ZERO, key.upage, PAGE_WRITABLE);
-		ASSERT(entry->type == PAGE_ANONYMOUS);
-	} else {
-		goto err;
-	}
-	ASSERT(entry != NULL);
+	enum palloc_flags flags = 0;
+	enum page_rw rw = PAGE_READONLY;
+	enum page_type type = PAGE_ANONYMOUS;
+	int fd = FD_INVALID;
+	off_t pos = 0;
 
-	kpage = palloc_get_page(entry->flags | PAL_USER);
+	bool got_entry_fields = false;
+	{
+		lock_acquire(&t->vm.lock);
+		ASSERT(t->vm.initialized);
+
+		struct hash_elem *e = hash_find(&t->vm.page_table, &key.elem);
+		struct page_entry *entry = NULL;
+		if (e != NULL) {
+			/* Found mapping registered by page_map_common(). */
+			entry = hash_entry(e, struct page_entry, elem);
+		} else if (is_stack_access(f, uaddr)) {
+			/* Register new mapping to accomodate stack growth. */
+			entry = page_map_common(PAL_ZERO,
+			                        key.upage,
+			                        PAGE_WRITABLE);
+			ASSERT(entry->type == PAGE_ANONYMOUS);
+		}
+
+		if (entry != NULL) {
+			got_entry_fields = true;
+			flags = entry->flags;
+			rw = entry->rw;
+			type = entry->type;
+			fd = entry->file.fd;
+			pos = entry->file.pos;
+		}
+
+		lock_release(&t->vm.lock);
+	}
+	if (!got_entry_fields) {
+		return false;
+	}
+
+	void *kpage = palloc_get_page(flags | PAL_USER);
 	if (kpage == NULL) {
 		ASSERT(0 && "palloc_get_page() failed, swap not implemented");
 		// TODO: evict? swap? pagedir_clear_page()?
-		goto err;
+		return false;
 	}
 
-	switch (entry->type) {
+	switch (type) {
 	case PAGE_ANONYMOUS:
 		// TODO: restore from swap (maybe stack frame)
 		break;
 	case PAGE_FILE_BACKED: {
-		struct file *file = fd_to_file(entry->file.fd);
+		struct file *file = fd_to_file(fd);
 		ASSERT(file != NULL);
 		ASSERT(intr_get_level() == INTR_ON);
 		acquire_io_lock();
 		const off_t to_restore = file_tell(file);
-		file_seek(file, entry->file.pos);
+		file_seek(file, pos);
 		const off_t bytes = file_read(file, kpage, PGSIZE);
 		file_seek(file, to_restore);
 		release_io_lock();
@@ -230,21 +256,16 @@ page_fault_impl(struct intr_frame *f, void *uaddr, void **kpage_out)
 	}
 
 	ASSERT(pagedir_get_page(t->pagedir, key.upage) == NULL);
-	const bool writable = (entry->rw == PAGE_WRITABLE);
+	const bool writable = (rw == PAGE_WRITABLE);
 	if (!pagedir_set_page(t->pagedir, key.upage, kpage, writable)) {
-		goto err;
+		palloc_free_page(kpage);
+		return false;
 	}
 
 	if (kpage_out != NULL) {
 		*kpage_out = kpage;
 	}
 	return true;
-
-err:
-	if (kpage != NULL) {
-		palloc_free_page(kpage);
-	}
-	return false;
 }
 
 bool
@@ -257,34 +278,48 @@ bool
 page_map(int fd, off_t pos, void *upage, enum page_rw rw)
 {
 	ASSERT(pos % PGSIZE == 0); /* Must be page-aligned. */
+	bool mapped = false;
 
-	struct page_entry *entry = page_map_common(0, upage, rw);
-	if (entry == NULL) {
-		return false;
+	struct thread *t = thread_current();
+	lock_acquire(&t->vm.lock);
+	{
+		struct page_entry *entry = page_map_common(0, upage, rw);
+		if (entry != NULL) {
+			struct file *file = fd_to_file(fd);
+			ASSERT(file != NULL);
+
+			entry->type = PAGE_FILE_BACKED;
+			entry->file.mmap = MMAP_ID_UNSET;
+			entry->file.fd = fd;
+			entry->file.pos = pos;
+
+			mapped = true;
+		}
 	}
+	lock_release(&t->vm.lock);
 
-	struct file *file = fd_to_file(fd);
-	ASSERT(file != NULL);
-
-	entry->type = PAGE_FILE_BACKED;
-	entry->file.mmap = MMAP_ID_UNSET;
-	entry->file.fd = fd;
-	entry->file.pos = pos;
-	return true;
+	return mapped;
 }
 
 bool
 page_map_zero(void *upage, enum page_rw rw)
 {
-	struct page_entry *entry = page_map_common(PAL_ZERO, upage, rw);
-	return (entry != NULL);
+	struct thread *t = thread_current();
+	lock_acquire(&t->vm.lock);
+	const bool mapped = (page_map_common(PAL_ZERO, upage, rw) != NULL);
+	lock_release(&t->vm.lock);
+	return mapped;
 }
 
 void *
 page_create(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 {
-	struct page_entry *entry = page_map_common(extra_flags, upage, rw);
-	if (entry == NULL) {
+	struct thread *t = thread_current();
+	lock_acquire(&t->vm.lock);
+	const bool mapped = (page_map_common(extra_flags, upage, rw) != NULL);
+	lock_release(&t->vm.lock);
+
+	if (!mapped) {
 		return NULL;
 	}
 
@@ -303,12 +338,14 @@ page_mmap(int fd, void *upage)
 	struct page_descriptor pd = {
 		.id = PAGE_DESCRIPTOR_ERROR,
 	};
-
 	struct file *reopened = NULL;
+	off_t len = 0;
+
 	acquire_io_lock();
 	{
 		struct file *file = fd_to_file(fd);
 		reopened = (file == NULL) ? NULL : file_reopen(file);
+		len = (reopened == NULL) ? 0 : file_length(reopened);
 	}
 	release_io_lock();
 
@@ -318,27 +355,25 @@ page_mmap(int fd, void *upage)
 
 	const int fd_new = fd_register(reopened);
 	struct thread *t = thread_current();
-	const int mmap_new = t->vm.mmap_generator++;
+	pd.id = t->vm.mmap_generator++;
 
-	acquire_io_lock();
-	const off_t len = file_length(reopened);
 	for (off_t pos = 0; pos < len; pos += PGSIZE) {
+		lock_acquire(&t->vm.lock);
 		struct page_entry *entry =
 			page_map_common(0, upage + pos, PAGE_WRITABLE);
 		if (entry == NULL) {
 			// TODO: unwind with page_munmap()
-			goto err;
+			lock_release(&t->vm.lock);
+			pd.id = PAGE_DESCRIPTOR_ERROR; /* Unset on error. */
+			break;
 		}
 		entry->type = PAGE_FILE_BACKED;
-		entry->file.mmap = mmap_new;
+		entry->file.mmap = pd.id;
 		entry->file.fd = fd_new;
 		entry->file.pos = pos;
+		lock_release(&t->vm.lock);
 	}
 
-	pd.id = mmap_new;
-
-err:
-	release_io_lock();
 	return pd;
 }
 
@@ -351,6 +386,8 @@ page_munmap(struct page_descriptor pd)
 
 	struct list to_unmap;
 	list_init(&to_unmap);
+
+	lock_acquire(&t->vm.lock);
 
 	hash_first(&i, &t->vm.page_table);
 	while (hash_next(&i)) {
@@ -376,6 +413,8 @@ page_munmap(struct page_descriptor pd)
 		ASSERT(hashed != NULL);
 		page_destructor(hashed, NULL);
 	}
+
+	lock_release(&t->vm.lock);
 
 	struct file *file = (got_fd == FD_INVALID) ? NULL : fd_to_file(got_fd);
 	if (file != NULL) {

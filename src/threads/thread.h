@@ -118,6 +118,7 @@ struct thread {
 		struct list children;
 	} wait; /* support for process_execute() and process_wait() */
 	struct {
+		struct lock lock;
 		bool initialized;
 		struct hash page_table;
 		int mmap_generator;
