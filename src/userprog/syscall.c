@@ -220,7 +220,7 @@ syscall_read(struct intr_frame *f, int *stack)
 		const size_t to_read = MIN(to_next, sz - read);
 
 		acquire_io_lock();
-		const off_t bytes = file_read_at(file, kaddr, to_read, read);
+		const off_t bytes = file_read(file, kaddr, to_read);
 		release_io_lock();
 
 		if (bytes <= 0) {
@@ -267,8 +267,7 @@ syscall_write(struct intr_frame *f, int *stack)
 		const size_t to_write = MIN(to_next, sz - written);
 
 		acquire_io_lock();
-		const off_t bytes =
-			file_write_at(file, kaddr, to_write, written);
+		const off_t bytes = file_write(file, kaddr, to_write);
 		release_io_lock();
 
 		if (bytes <= 0) {
