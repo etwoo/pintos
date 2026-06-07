@@ -252,21 +252,21 @@ syscall_write(struct intr_frame *f, int *stack)
 	void *cursor = uaddr;
 	void *end = pg_round_up(uaddr + sz) - 1;
 
-	while (cursor < end && (fd == STDOUT_FILENO || file != NULL)) {
+	if (fd == STDOUT_FILENO) {
+		ASSERT(sz < PGSIZE);
+		putbuf(pagedir_get_page(t->pagedir, uaddr), sz);
+		written += sz;
+	}
+
+	while (cursor < end && file != NULL) {
 		void *kaddr = pagedir_get_page(t->pagedir, cursor);
 		void *next = pg_round_down(cursor + PGSIZE);
 		const size_t to_write = next - cursor;
+		const off_t pos = cursor - uaddr;
 
-		off_t bytes = 0;
-		if (fd == STDOUT_FILENO) {
-			putbuf(kaddr, to_write);
-			bytes += to_write;
-		} else {
-			const off_t pos = cursor - uaddr;
-			acquire_io_lock();
-			bytes = file_write_at(file, kaddr, to_write, pos);
-			release_io_lock();
-		}
+		acquire_io_lock();
+		const off_t bytes = file_write_at(file, kaddr, to_write, pos);
+		release_io_lock();
 
 		if (bytes < 0) {
 			written = bytes;
