@@ -64,7 +64,7 @@ frame_get_page_maybe_swap(enum palloc_flags flags)
 
 		lock_release(&ft.lock);
 	}
-	page_evict(victim_tid, victim_upage);
+	thread_page_evict(victim_tid, victim_upage);
 
 	// TODO: handle other thread racing, allocating between when we free up
 	// a page and when we allocate ourselves

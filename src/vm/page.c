@@ -454,44 +454,19 @@ page_unpin(void *uaddr, size_t sz)
 	frame_unpin(thread_tid(), uaddr, sz);
 }
 
-struct page_evict_args {
-	tid_t owner;
-	void *upage;
-};
+/* Internal API for use only by thread_page_evict(). */
+void page_evict_internal(struct thread *t, void *upage);
 
-static void
-page_evict_from_owner(struct thread *t, void *aux)
+void
+page_evict_internal(struct thread *t, void *upage)
 {
-	struct page_evict_args *args = aux;
-	if (t->tid != args->owner) {
-		return;
-	}
-
-	// TODO: not safe to acquire locks and reenable interrupts inside
-	// thread_foreach() callback; may lead to invalid all_list iterator?
-	enum intr_level old_level = intr_enable(); // TODO rm
-	lock_acquire(&t->vm.lock);
+	ASSERT(lock_held_by_current_thread(&t->vm.lock));
 
 	struct page_entry key = {
-		.upage = args->upage,
+		.upage = upage,
 	};
 	struct hash_elem *found = hash_find(&t->vm.page_table, &key.elem);
 	if (found != NULL) {
 		page_evict_prepare(t, found, /* swap_anonymous_memory */ true);
 	}
-
-	lock_release(&t->vm.lock);
-	intr_set_level(old_level);
-}
-
-void
-page_evict(tid_t owner, void *upage)
-{
-	struct page_evict_args args = {
-		.owner = owner,
-		.upage = upage,
-	};
-	enum intr_level old_level = intr_disable(); // TODO rm
-	thread_foreach(page_evict_from_owner, &args);
-	intr_set_level(old_level);
 }

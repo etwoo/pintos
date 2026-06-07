@@ -849,3 +849,40 @@ thread_signal_exit(tid_t parent, tid_t child, int child_status)
 
 	lock_release(&t->wait.lock);
 }
+
+/* Reach into page.c internals. */
+extern void page_evict_internal(struct thread *t, void *upage);
+
+void
+thread_page_evict(tid_t victim, void *upage)
+{
+	if (victim == TID_ERROR) {
+		return;
+	}
+
+	struct thread *t = NULL;
+	enum intr_level old_level = intr_disable();
+	{
+		struct list_elem *e = list_begin(&all_list);
+		for (; e != list_end(&all_list); e = list_next(e)) {
+			struct thread *candidate =
+				list_entry(e, struct thread, allelem);
+			if (candidate->tid == victim) {
+				t = candidate;
+				break;
+			}
+		}
+	}
+	if (t == NULL) {
+		intr_set_level(old_level);
+		return;
+	}
+
+	/* Acquire thread-level lock, and then restore interrupts. */
+	lock_acquire(&t->vm.lock);
+	intr_set_level(old_level);
+
+	page_evict_internal(t, upage);
+
+	lock_release(&t->vm.lock);
+}

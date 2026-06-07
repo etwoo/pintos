@@ -31,6 +31,4 @@ void page_unpin(void *uaddr, size_t sz);
 struct intr_frame;
 bool page_fault_on(struct intr_frame *f, void *uaddr);
 
-void page_evict(tid_t owner, void *upage);
-
 #endif

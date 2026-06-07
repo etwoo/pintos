@@ -179,5 +179,6 @@ bool is_thread(struct thread *t);
 struct thread *thread_pop_by_priority(struct list *threads);
 
 void thread_signal_exit(tid_t parent, tid_t child, int child_status);
+void thread_page_evict(tid_t victim, void *upage);
 
 #endif /* threads/thread.h */
