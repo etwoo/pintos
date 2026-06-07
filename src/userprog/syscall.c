@@ -267,7 +267,8 @@ syscall_write(struct intr_frame *f, int *stack)
 		const size_t to_write = MIN(to_next, sz - written);
 
 		acquire_io_lock();
-		const off_t bytes = file_write_at(file, kaddr, to_write, written);
+		const off_t bytes =
+			file_write_at(file, kaddr, to_write, written);
 		release_io_lock();
 
 		if (bytes < 0) {
