@@ -127,8 +127,7 @@ frame_pin_set(tid_t tid, void *uaddr, size_t sz, bool to_pin)
 			}
 		}
 		if (to_pin && e == list_end(&ft.table)) {
-			// TODO: restore from swap if pin is too late?
-			ASSERT(0 && "No frame to pin; already swapped?");
+			ASSERT(0 && "No frame to pin; already swapped out?");
 		}
 	}
 
