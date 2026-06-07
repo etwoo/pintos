@@ -203,8 +203,6 @@ syscall_read(struct intr_frame *f, int *stack)
 
 	struct thread *t = thread_current();
 	off_t read = 0;
-	void *cursor = uaddr;
-	const void *end = uaddr + sz;
 
 	if (fd == STDIN_FILENO) {
 		uint8_t *p = uaddr;
@@ -213,16 +211,16 @@ syscall_read(struct intr_frame *f, int *stack)
 	}
 
 	// TODO: consolidate syscall_read+syscall_write, avoid loop copy pasta
-	while (cursor < end && file != NULL) {
+	while (read <= (off_t)sz && file != NULL) {
+		void *cursor = uaddr + read;
 		void *kaddr = pagedir_get_page(t->pagedir, cursor);
 		ASSERT(kaddr != NULL);
 
-		void *next = pg_round_down(cursor + PGSIZE);
-		const size_t to_read = MIN(next - cursor, end - cursor);
-		const off_t pos = cursor - uaddr;
+		const size_t to_next = pg_round_down(cursor + PGSIZE) - cursor;
+		const size_t to_read = MIN(to_next, sz - read);
 
 		acquire_io_lock();
-		const off_t bytes = file_read_at(file, kaddr, to_read, pos);
+		const off_t bytes = file_read_at(file, kaddr, to_read, read);
 		release_io_lock();
 
 		if (bytes < 0) {
@@ -231,7 +229,6 @@ syscall_read(struct intr_frame *f, int *stack)
 		}
 
 		read += bytes;
-		cursor = next;
 	}
 
 	f->eax = read;
@@ -254,8 +251,6 @@ syscall_write(struct intr_frame *f, int *stack)
 
 	struct thread *t = thread_current();
 	off_t written = 0;
-	void *cursor = uaddr;
-	const void *end = uaddr + sz;
 
 	if (fd == STDOUT_FILENO) {
 		ASSERT(sz < PGSIZE);
@@ -263,16 +258,16 @@ syscall_write(struct intr_frame *f, int *stack)
 		written += sz;
 	}
 
-	while (cursor < end && file != NULL) {
+	while (written < (off_t)sz && file != NULL) {
+		void *cursor = uaddr + written;
 		void *kaddr = pagedir_get_page(t->pagedir, cursor);
 		ASSERT(kaddr != NULL);
 
-		void *next = pg_round_down(cursor + PGSIZE);
-		const size_t to_write = MIN(next - cursor, end - cursor);
-		const off_t pos = cursor - uaddr;
+		const size_t to_next = pg_round_down(cursor + PGSIZE) - cursor;
+		const size_t to_write = MIN(to_next, sz - written);
 
 		acquire_io_lock();
-		const off_t bytes = file_write_at(file, kaddr, to_write, pos);
+		const off_t bytes = file_write_at(file, kaddr, to_write, written);
 		release_io_lock();
 
 		if (bytes < 0) {
@@ -281,7 +276,6 @@ syscall_write(struct intr_frame *f, int *stack)
 		}
 
 		written += bytes;
-		cursor = next;
 	}
 
 	f->eax = written;
