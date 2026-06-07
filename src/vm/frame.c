@@ -8,7 +8,6 @@
 
 #include <hash.h>
 #include <list.h>
-#include <string.h>
 
 struct frame {
 	tid_t owner;
@@ -68,8 +67,6 @@ frame_get_page_maybe_swap(enum palloc_flags flags)
 
 	kpage = thread_page_evict(victim_tid, victim_upage);
 	ASSERT(kpage != NULL && "Out-of-memory even after swapping");
-	memset(kpage, 0, PGSIZE); /* Avoid information leak between threads. */
-
 	return kpage;
 }
 

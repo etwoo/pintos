@@ -96,6 +96,8 @@ page_evict_prepare(struct thread *t, struct hash_elem *e_, void **kpage_stolen)
 		palloc_free_page(kpage);
 	} else {
 		*kpage_stolen = kpage;
+		/* Avoid potential information leakage between threads. */
+		memset(kpage, 0, PGSIZE);
 	}
 
 done:
