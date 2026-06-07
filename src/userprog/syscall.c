@@ -265,11 +265,7 @@ syscall_io(int syscall_number, struct intr_frame *f, int *stack)
 
 	page_unpin(uaddr, sz);
 
-	if (total_bytes == 0 && sz > 0) {
-		f->eax = IO_FAIL;
-	} else {
-		f->eax = total_bytes;
-	}
+	f->eax = total_bytes;
 }
 
 static void
