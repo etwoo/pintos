@@ -188,7 +188,7 @@ syscall_filesize(struct intr_frame *f, int *stack)
 }
 
 static void
-syscall_read(struct intr_frame *f, int *stack)
+syscall_io_with_buffer(int syscall_number, struct intr_frame *f, int *stack)
 {
 	const int fd = *stack++;
 	struct file *file = fd_to_file(fd);
@@ -202,83 +202,60 @@ syscall_read(struct intr_frame *f, int *stack)
 	f->eax = IO_FAIL; /* Assume failure, in case of early exit. */
 
 	struct thread *t = thread_current();
-	off_t read = 0;
+	off_t total_bytes = 0;
 
-	if (fd == STDIN_FILENO) {
-		uint8_t *p = uaddr;
-		*p = input_getc();
-		read = 1;
+	switch (syscall_number) {
+	case SYS_READ:
+		if (fd == STDIN_FILENO) {
+			uint8_t *p = uaddr;
+			*p = input_getc();
+			total_bytes = 1;
+		}
+		break;
+	case SYS_WRITE:
+		if (fd == STDOUT_FILENO) {
+			ASSERT(sz < PGSIZE);
+			putbuf(pagedir_get_page(t->pagedir, uaddr), sz);
+			total_bytes += sz;
+		}
+		break;
+	default:
+		NOT_REACHED();
+		break;
 	}
 
-	// TODO: consolidate syscall_read+syscall_write, avoid loop copy pasta
-	while (read < (off_t)sz && file != NULL) {
-		void *cursor = uaddr + read;
+	while (total_bytes < (off_t)sz && file != NULL) {
+		void *cursor = uaddr + total_bytes;
 		void *kaddr = pagedir_get_page(t->pagedir, cursor);
 		ASSERT(kaddr != NULL);
 
 		const size_t to_next = pg_round_down(cursor + PGSIZE) - cursor;
-		const size_t to_read = MIN(to_next, sz - read);
+		const size_t segment = MIN(to_next, sz - total_bytes);
+		off_t bytes = 0;
 
 		acquire_io_lock();
-		const off_t bytes = file_read(file, kaddr, to_read);
+		switch (syscall_number) {
+		case SYS_READ:
+			bytes = file_read(file, kaddr, segment);
+			break;
+		case SYS_WRITE:
+			bytes = file_write(file, kaddr, segment);
+			break;
+		default:
+			NOT_REACHED();
+			break;
+		}
 		release_io_lock();
 
 		if (bytes <= 0) {
-			read = bytes;
+			total_bytes = bytes;
 			break;
 		}
 
-		read += bytes;
+		total_bytes += bytes;
 	}
 
-	f->eax = read;
-	page_unpin(uaddr, sz);
-}
-
-static void
-syscall_write(struct intr_frame *f, int *stack)
-{
-	const int fd = *stack++;
-	struct file *file = fd_to_file(fd);
-
-	unsigned sz = 0;
-	void *uaddr = NULL;
-	(void)syscall_arg_peek(f, stack, &sz, &uaddr);
-	stack += 2;
-
-	page_pin(uaddr, sz);
-	f->eax = IO_FAIL; /* Assume failure, in case of early exit. */
-
-	struct thread *t = thread_current();
-	off_t written = 0;
-
-	if (fd == STDOUT_FILENO) {
-		ASSERT(sz < PGSIZE);
-		putbuf(pagedir_get_page(t->pagedir, uaddr), sz);
-		written += sz;
-	}
-
-	while (written < (off_t)sz && file != NULL) {
-		void *cursor = uaddr + written;
-		void *kaddr = pagedir_get_page(t->pagedir, cursor);
-		ASSERT(kaddr != NULL);
-
-		const size_t to_next = pg_round_down(cursor + PGSIZE) - cursor;
-		const size_t to_write = MIN(to_next, sz - written);
-
-		acquire_io_lock();
-		const off_t bytes = file_write(file, kaddr, to_write);
-		release_io_lock();
-
-		if (bytes <= 0) {
-			written = bytes;
-			break;
-		}
-
-		written += bytes;
-	}
-
-	f->eax = written;
+	f->eax = total_bytes;
 	page_unpin(uaddr, sz);
 }
 
@@ -381,10 +358,8 @@ syscall_handler(struct intr_frame *f)
 		syscall_filesize(f, kaddr);
 		break;
 	case SYS_READ:
-		syscall_read(f, kaddr);
-		break;
 	case SYS_WRITE:
-		syscall_write(f, kaddr);
+		syscall_io_with_buffer(syscall_number, f, kaddr);
 		break;
 	case SYS_SEEK:
 		syscall_seek(f, kaddr);
