@@ -7,6 +7,8 @@
 
 void frame_init(void);
 void *frame_get_page(void *upage, enum palloc_flags flags, enum page_rw rw);
+void frame_pin(tid_t tid, void *uaddr, size_t sz);
+void frame_unpin(tid_t tid, void *uaddr, size_t sz);
 void frame_clear(tid_t tid);
 
 #endif

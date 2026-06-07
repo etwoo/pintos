@@ -124,10 +124,13 @@ void
 page_destroy(void)
 {
 	struct thread *t = thread_current();
+
 	lock_acquire(&t->vm.lock);
 	ASSERT(t->vm.initialized);
 	hash_destroy(&t->vm.page_table, page_destructor);
 	lock_release(&t->vm.lock);
+
+	frame_clear(t->tid);
 }
 
 static bool
@@ -333,6 +336,7 @@ void *
 page_create(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 {
 	struct thread *t = thread_current();
+
 	lock_acquire(&t->vm.lock);
 	const bool mapped = (page_map_common(extra_flags, upage, rw) != NULL);
 	lock_release(&t->vm.lock);
@@ -441,6 +445,18 @@ page_munmap(struct page_descriptor pd)
 		file_close(file);
 		release_io_lock();
 	}
+}
+
+void
+page_pin(void *uaddr, size_t sz)
+{
+	frame_pin(thread_tid(), uaddr, sz);
+}
+
+void
+page_unpin(void *uaddr, size_t sz)
+{
+	frame_unpin(thread_tid(), uaddr, sz);
 }
 
 struct page_evict_args {

@@ -55,9 +55,15 @@ check_span_is_user_vaddr(struct intr_frame *f, const void *uaddr, unsigned sz)
 }
 
 static void *
-syscall_arg_peek(struct intr_frame *f, int *stack, unsigned *got_sz)
+syscall_arg_peek(struct intr_frame *f,
+                 int *stack,
+                 unsigned *got_sz,
+                 void **got_uaddr)
 {
 	void *uaddr = (void *)(*stack); /* uaddr parameter on top of stack */
+	if (got_uaddr != NULL) {
+		*got_uaddr = uaddr;
+	}
 
 	if (got_sz != NULL) {
 		/* Check span using size on stack (second arg). */
@@ -106,7 +112,7 @@ syscall_exit(struct intr_frame *f, int *stack)
 static void
 syscall_exec(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek(f, stack++, NULL);
+	void *filename = syscall_arg_peek(f, stack++, NULL, NULL);
 	f->eax = process_execute(filename);
 }
 
@@ -120,7 +126,7 @@ syscall_wait(struct intr_frame *f, int *stack)
 static void
 syscall_create(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek(f, stack++, NULL);
+	void *filename = syscall_arg_peek(f, stack++, NULL, NULL);
 	const unsigned sz = *stack++;
 
 	acquire_io_lock();
@@ -133,7 +139,7 @@ syscall_create(struct intr_frame *f, int *stack)
 static void
 syscall_remove(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek(f, stack++, NULL);
+	void *filename = syscall_arg_peek(f, stack++, NULL, NULL);
 
 	acquire_io_lock();
 	const bool removed = filesys_remove(filename);
@@ -145,7 +151,7 @@ syscall_remove(struct intr_frame *f, int *stack)
 static void
 syscall_open(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek(f, stack++, NULL);
+	void *filename = syscall_arg_peek(f, stack++, NULL, NULL);
 
 	acquire_io_lock();
 	struct file *fh = filesys_open(filename);
@@ -177,10 +183,14 @@ static void
 syscall_read(struct intr_frame *f, int *stack)
 {
 	const int fd = *stack++;
+	struct file *file = fd_to_file(fd);
 
 	unsigned sz = 0;
-	void *buffer = syscall_arg_peek(f, stack, &sz);
+	void *buffer_uaddr = NULL;
+	void *buffer = syscall_arg_peek(f, stack, &sz, &buffer_uaddr);
 	stack += 2;
+
+	page_pin(buffer_uaddr, sz);
 
 	if (fd == STDIN_FILENO) {
 		if (sz == 0) {
@@ -190,42 +200,42 @@ syscall_read(struct intr_frame *f, int *stack)
 			*p = input_getc();
 			f->eax = 1;
 		}
-		return;
-	}
-
-	struct file *file = fd_to_file(fd);
-	if (file == NULL) {
-		f->eax = IO_FAIL;
-	} else {
+	} else if (file != NULL) {
 		acquire_io_lock();
 		f->eax = file_read(file, buffer, sz);
 		release_io_lock();
+	} else {
+		f->eax = IO_FAIL;
 	}
+
+	page_unpin(buffer_uaddr, sz);
 }
 
 static void
 syscall_write(struct intr_frame *f, int *stack)
 {
 	const int fd = *stack++;
+	struct file *file = fd_to_file(fd);
 
 	unsigned sz = 0;
-	void *buffer = syscall_arg_peek(f, stack, &sz);
+	void *buffer_uaddr = NULL;
+	void *buffer = syscall_arg_peek(f, stack, &sz, &buffer_uaddr);
 	stack += 2;
+
+	page_pin(buffer_uaddr, sz);
 
 	if (fd == STDOUT_FILENO) {
 		putbuf(buffer, sz);
 		f->eax = sz;
-		return;
-	}
-
-	struct file *file = fd_to_file(fd);
-	if (file == NULL) {
-		f->eax = IO_FAIL;
-	} else {
+	} else if (file != NULL) {
 		acquire_io_lock();
 		f->eax = file_write(file, buffer, sz);
 		release_io_lock();
+	} else {
+		f->eax = IO_FAIL;
 	}
+
+	page_unpin(buffer_uaddr, sz);
 }
 
 static void

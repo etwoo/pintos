@@ -16,7 +16,6 @@
 #include "userprog/io.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
-#include "vm/frame.h"
 #include "vm/page.h"
 
 #include <array.h>
@@ -217,7 +216,6 @@ process_exit(int status)
 
 	/* Flush dirty pages to disk, and clear address mappings. */
 	page_destroy();
-	frame_clear(cur->tid);
 
 	/* Destroy the current process's page directory and switch back
 	   to the kernel-only page directory. */
@@ -576,7 +574,6 @@ load_segment(int fd,
 			}
 			ASSERT(page_read_bytes == 0);
 		} else {
-			// TODO: map last segment to EOF, less than PGSIZE
 			uint8_t *kpage = page_create(0, upage, rw);
 			if (kpage == NULL) {
 				return false;

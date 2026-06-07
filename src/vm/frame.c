@@ -3,6 +3,7 @@
 #include "threads/malloc.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
+#include "threads/vaddr.h"
 #include "userprog/pagedir.h"
 
 #include <hash.h>
@@ -22,6 +23,7 @@
 struct frame {
 	tid_t owner;
 	void *upage;
+	bool pinned;
 	struct list_elem elem;
 };
 
@@ -51,15 +53,27 @@ frame_get_page_maybe_swap(enum palloc_flags flags)
 	void *victim_upage = NULL;
 	{
 		lock_acquire(&ft.lock);
-		ASSERT(!list_empty(&ft.table));
+
 		// TODO: second-chance replacement instead of pure FIFO
-		// TODO: avoid kpages in-use by syscall handler; pinning?
-		struct list_elem *e = list_pop_front(&ft.table);
+		struct list_elem *e = list_begin(&ft.table);
+		for (; e != list_end(&ft.table); e = list_next(e)) {
+			struct frame *candidate =
+				list_entry(e, struct frame, elem);
+			if (!candidate->pinned) {
+				list_remove(e); /* Pop first unpinned entry. */
+				break;
+			}
+		}
+		ASSERT(e != list_end(&ft.table));
+
 		struct frame *fr = list_entry(e, struct frame, elem);
 		victim_tid = fr->owner;
 		victim_upage = fr->upage;
-		lock_release(&ft.lock);
+
+		ASSERT(!fr->pinned);
 		free(fr);
+
+		lock_release(&ft.lock);
 	}
 	page_evict(victim_tid, victim_upage);
 
@@ -90,6 +104,7 @@ frame_get_page(void *upage, enum palloc_flags flags, enum page_rw rw)
 
 	fr->owner = t->tid;
 	fr->upage = upage;
+	fr->pinned = false;
 
 	const bool writable = (rw == PAGE_WRITABLE);
 	if (!pagedir_set_page(t->pagedir, upage, kpage, writable)) {
@@ -103,6 +118,44 @@ frame_get_page(void *upage, enum palloc_flags flags, enum page_rw rw)
 	lock_release(&ft.lock);
 
 	return kpage;
+}
+
+static void
+frame_pin_set(tid_t tid, void *uaddr, size_t sz, bool to_pin)
+{
+	lock_acquire(&ft.lock);
+
+	void *begin = pg_round_down(uaddr);
+	void *end = pg_round_up(uaddr + sz) - 1;
+
+	for (void *cursor = begin; cursor < end; cursor += PGSIZE) {
+		struct list_elem *e = list_begin(&ft.table);
+		for (; e != list_end(&ft.table); e = list_next(e)) {
+			struct frame *maybe = list_entry(e, struct frame, elem);
+			if (maybe->owner == tid && maybe->upage == cursor) {
+				maybe->pinned = to_pin;
+				break;
+			}
+		}
+		if (to_pin && e == list_end(&ft.table)) {
+			// TODO: restore from swap if pin is too late?
+			ASSERT(0 && "No frame to pin; already swapped?");
+		}
+	}
+
+	lock_release(&ft.lock);
+}
+
+void
+frame_pin(tid_t tid, void *uaddr, size_t sz)
+{
+	frame_pin_set(tid, uaddr, sz, /* to_pin */ true);
+}
+
+void
+frame_unpin(tid_t tid, void *uaddr, size_t sz)
+{
+	frame_pin_set(tid, uaddr, sz, /* to_pin */ false);
 }
 
 void
