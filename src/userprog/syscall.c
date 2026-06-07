@@ -211,7 +211,7 @@ syscall_read(struct intr_frame *f, int *stack)
 	}
 
 	// TODO: consolidate syscall_read+syscall_write, avoid loop copy pasta
-	while (read <= (off_t)sz && file != NULL) {
+	while (read < (off_t)sz && file != NULL) {
 		void *cursor = uaddr + read;
 		void *kaddr = pagedir_get_page(t->pagedir, cursor);
 		ASSERT(kaddr != NULL);
