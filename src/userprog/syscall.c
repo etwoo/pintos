@@ -231,43 +231,39 @@ syscall_write(struct intr_frame *f, int *stack)
 	stack += 2;
 
 	page_pin(uaddr, sz);
+	f->eax = IO_FAIL; /* Assume failure, in case of early exit. */
 
-	if (fd == STDOUT_FILENO || file != NULL) {
-		struct thread *t = thread_current();
-		off_t written = 0;
-		void *end = pg_round_up(uaddr + sz) - 1;
+	struct thread *t = thread_current();
+	off_t written = 0;
+	void *cursor = uaddr;
+	void *end = pg_round_up(uaddr + sz) - 1;
 
-		void *cursor = uaddr;
-		while (cursor < end) {
-			void *kaddr = pagedir_get_page(t->pagedir, cursor);
-			void *next = pg_round_down(cursor + PGSIZE);
-			const size_t seg = next - cursor;
+	while (cursor < end && (fd == STDOUT_FILENO || file != NULL)) {
+		void *kaddr = pagedir_get_page(t->pagedir, cursor);
+		void *next = pg_round_down(cursor + PGSIZE);
+		const size_t to_write = next - cursor;
 
-			off_t bytes = 0;
-			if (fd == STDOUT_FILENO) {
-				putbuf(kaddr, seg);
-				bytes += seg;
-			} else {
-				acquire_io_lock();
-				const off_t ofs = cursor - uaddr;
-				bytes = file_write_at(file, kaddr, seg, ofs);
-				release_io_lock();
-			}
-
-			if (bytes < 0) {
-				written = bytes;
-				break;
-			}
-
-			written += bytes;
-			cursor = next;
+		off_t bytes = 0;
+		if (fd == STDOUT_FILENO) {
+			putbuf(kaddr, to_write);
+			bytes += to_write;
+		} else {
+			const off_t pos = cursor - uaddr;
+			acquire_io_lock();
+			bytes = file_write_at(file, kaddr, to_write, pos);
+			release_io_lock();
 		}
 
-		f->eax = written;
-	} else {
-		f->eax = IO_FAIL;
+		if (bytes < 0) {
+			written = bytes;
+			break;
+		}
+
+		written += bytes;
+		cursor = next;
 	}
 
+	f->eax = written;
 	page_unpin(uaddr, sz);
 }
 
