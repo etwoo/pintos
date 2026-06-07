@@ -59,7 +59,7 @@ check_span_is_user_vaddr(struct intr_frame *f, const void *uaddr, unsigned sz)
 	void *end = pg_round_up(uaddr + sz) - 1;
 	for (void *cursor = begin; cursor < end; cursor += PGSIZE) {
 		void *kaddr = pagedir_get_page(t->pagedir, cursor);
-		if (kaddr == NULL) {
+		if (kaddr == NULL && !page_fault_on(f, cursor)) {
 			thread_exit_invalid_pointer_argument(f);
 		}
 	}
