@@ -20,6 +20,8 @@
 #define IO_SUCCESS 0 /* Successful IO (when not returning fd or size). */
 #define IO_FAIL -1   /* Conceptually distinct from FD_INVALID. */
 
+#define MIN(x, y) ((x) < (y) ? (x) : (y))
+
 static void syscall_handler(struct intr_frame *);
 
 void
@@ -202,7 +204,7 @@ syscall_read(struct intr_frame *f, int *stack)
 	struct thread *t = thread_current();
 	off_t read = 0;
 	void *cursor = uaddr;
-	void *end = pg_round_up(uaddr + sz) - 1;
+	const void *end = uaddr + sz;
 
 	if (fd == STDIN_FILENO) {
 		uint8_t *p = uaddr;
@@ -212,8 +214,10 @@ syscall_read(struct intr_frame *f, int *stack)
 
 	while (cursor < end && file != NULL) {
 		void *kaddr = pagedir_get_page(t->pagedir, cursor);
+		ASSERT(kaddr != NULL);
+
 		void *next = pg_round_down(cursor + PGSIZE);
-		const size_t to_read = next - cursor;
+		const size_t to_read = MIN(next - cursor, end - cursor);
 		const off_t pos = cursor - uaddr;
 
 		acquire_io_lock();
@@ -250,7 +254,7 @@ syscall_write(struct intr_frame *f, int *stack)
 	struct thread *t = thread_current();
 	off_t written = 0;
 	void *cursor = uaddr;
-	void *end = pg_round_up(uaddr + sz) - 1;
+	const void *end = uaddr + sz;
 
 	if (fd == STDOUT_FILENO) {
 		ASSERT(sz < PGSIZE);
@@ -260,8 +264,10 @@ syscall_write(struct intr_frame *f, int *stack)
 
 	while (cursor < end && file != NULL) {
 		void *kaddr = pagedir_get_page(t->pagedir, cursor);
+		ASSERT(kaddr != NULL);
+
 		void *next = pg_round_down(cursor + PGSIZE);
-		const size_t to_write = next - cursor;
+		const size_t to_write = MIN(next - cursor, end - cursor);
 		const off_t pos = cursor - uaddr;
 
 		acquire_io_lock();
