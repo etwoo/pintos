@@ -195,7 +195,7 @@ syscall_filesize(struct intr_frame *f, int *stack)
 }
 
 static void
-syscall_io_with_buffer(int syscall_number, struct intr_frame *f, int *stack)
+syscall_io(int syscall_number, struct intr_frame *f, int *stack)
 {
 	const int fd = *stack++;
 	struct file *file = fd_to_file(fd);
@@ -368,7 +368,7 @@ syscall_handler(struct intr_frame *f)
 		break;
 	case SYS_READ:
 	case SYS_WRITE:
-		syscall_io_with_buffer(syscall_number, f, kaddr);
+		syscall_io(syscall_number, f, kaddr);
 		break;
 	case SYS_SEEK:
 		syscall_seek(f, kaddr);
