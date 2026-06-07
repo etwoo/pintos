@@ -205,11 +205,10 @@ syscall_io(int syscall_number, struct intr_frame *f, int *stack)
 	(void)syscall_arg_peek(f, stack, &sz, &uaddr);
 	stack += 2;
 
-	page_pin(uaddr, sz);
-	f->eax = IO_FAIL; /* Assume failure, in case of early exit. */
-
 	struct thread *t = thread_current();
 	off_t total_bytes = 0;
+
+	page_pin(uaddr, sz);
 
 	switch (syscall_number) {
 	case SYS_READ:
@@ -264,8 +263,13 @@ syscall_io(int syscall_number, struct intr_frame *f, int *stack)
 		total_bytes += bytes;
 	}
 
-	f->eax = total_bytes;
 	page_unpin(uaddr, sz);
+
+	if (total_bytes == 0) {
+		f->eax = IO_FAIL;
+	} else {
+		f->eax = total_bytes;
+	}
 }
 
 static void
