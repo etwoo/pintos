@@ -338,11 +338,7 @@ page_create(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 	}
 
 	void *kpage = NULL;
-	if (!page_fault_impl(NULL, upage, &kpage)) {
-		// TODO: on error, free() entry instead of waiting for exit()
-		return NULL;
-	}
-
+	(void)page_fault_impl(NULL, upage, &kpage);
 	return kpage;
 }
 
