@@ -805,10 +805,13 @@ thread_get_priority_of_mlfqs(struct thread *t)
 	return clamped;
 }
 
-void
-thread_signal_exit(tid_t parent, tid_t child, int child_status)
+static void
+thread_call_on_match(tid_t target,
+                     struct lock *choose_lock(struct thread *),
+                     void do_work_with_lock(struct thread *, void *),
+		     void *aux)
 {
-	if (parent == TID_ERROR) {
+	if (target == TID_ERROR) {
 		return;
 	}
 
@@ -819,7 +822,7 @@ thread_signal_exit(tid_t parent, tid_t child, int child_status)
 		for (; e != list_end(&all_list); e = list_next(e)) {
 			struct thread *candidate =
 				list_entry(e, struct thread, allelem);
-			if (candidate->tid == parent) {
+			if (candidate->tid == target) {
 				t = candidate;
 				break;
 			}
@@ -831,23 +834,59 @@ thread_signal_exit(tid_t parent, tid_t child, int child_status)
 	}
 
 	/* Acquire thread-level lock, and then restore interrupts. */
-	lock_acquire(&t->wait.lock);
+	lock_acquire(choose_lock(t));
 	intr_set_level(old_level);
+
+	do_work_with_lock(t, aux);
+
+	lock_release(choose_lock(t));
+}
+
+static struct lock *
+get_wait_lock(struct thread *t)
+{
+	return &t->wait.lock;
+}
+
+struct status_args {
+	tid_t child;
+	int child_status;
+};
+
+static void
+set_child_status(struct thread *t, void *aux)
+{
+	ASSERT(lock_held_by_current_thread(&t->wait.lock));
+	struct status_args *args = aux;
 
 	struct list_elem *e = list_begin(&t->wait.children);
 	for (; e != list_end(&t->wait.children); e = list_next(e)) {
 		struct thread_wait_code *twc =
 			list_entry(e, struct thread_wait_code, elem);
-		if (twc->tid == child) {
+		if (twc->tid == args->child) {
 			ASSERT(twc->code == EXIT_UNSET);
 			/* Update entry registered by process_execute(). */
-			twc->code = child_status;
+			twc->code = args->child_status;
 			cond_broadcast(&t->wait.on_exit, &t->wait.lock);
 			break;
 		}
 	}
+}
 
-	lock_release(&t->wait.lock);
+void
+thread_signal_exit(tid_t parent, tid_t child, int child_status)
+{
+	struct status_args args = {
+		.child = child,
+		.child_status = child_status,
+	};
+	thread_call_on_match(parent, get_wait_lock, set_child_status, &args);
+}
+
+static struct lock *
+get_vm_lock(struct thread *t)
+{
+	return &t->vm.lock;
 }
 
 /* Reach into page.c internals. */
@@ -856,33 +895,5 @@ extern void page_evict_internal(struct thread *t, void *upage);
 void
 thread_page_evict(tid_t victim, void *upage)
 {
-	if (victim == TID_ERROR) {
-		return;
-	}
-
-	struct thread *t = NULL;
-	enum intr_level old_level = intr_disable();
-	{
-		struct list_elem *e = list_begin(&all_list);
-		for (; e != list_end(&all_list); e = list_next(e)) {
-			struct thread *candidate =
-				list_entry(e, struct thread, allelem);
-			if (candidate->tid == victim) {
-				t = candidate;
-				break;
-			}
-		}
-	}
-	if (t == NULL) {
-		intr_set_level(old_level);
-		return;
-	}
-
-	/* Acquire thread-level lock, and then restore interrupts. */
-	lock_acquire(&t->vm.lock);
-	intr_set_level(old_level);
-
-	page_evict_internal(t, upage);
-
-	lock_release(&t->vm.lock);
+	thread_call_on_match(victim, get_vm_lock, page_evict_internal, upage);
 }
