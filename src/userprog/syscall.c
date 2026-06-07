@@ -22,7 +22,6 @@
 
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 
-static const void *VADDR_CODE_SEGMENT = (void *)0x08048000;
 static void syscall_handler(struct intr_frame *);
 
 void
@@ -38,6 +37,9 @@ thread_exit_invalid_pointer_argument(struct intr_frame *f)
 	thread_exit(EXIT_EXCEPTION);
 }
 
+/* See __executable_start in ./src/lib/user/user.lds */
+static const void *VADDR_CODE_SEGMENT = (void *)0x08048000;
+
 /* If check succeeds, map uaddr to kaddr and return. */
 static void *
 check_span_is_user_vaddr(struct intr_frame *f, const void *uaddr, unsigned sz)
@@ -46,15 +48,16 @@ check_span_is_user_vaddr(struct intr_frame *f, const void *uaddr, unsigned sz)
 	if (!is_user_vaddr(uaddr) || !is_user_vaddr(uaddr_end)) {
 		thread_exit_invalid_pointer_argument(f);
 	}
+	if (pg_round_down(uaddr) == VADDR_CODE_SEGMENT ||
+	    pg_round_down(uaddr_end) == VADDR_CODE_SEGMENT) {
+		thread_exit_invalid_pointer_argument(f);
+	}
 
 	struct thread *t = thread_current();
 
 	void *begin = pg_round_down(uaddr);
 	void *end = pg_round_up(uaddr + sz) - 1;
 	for (void *cursor = begin; cursor < end; cursor += PGSIZE) {
-		if (cursor == VADDR_CODE_SEGMENT) {
-			thread_exit_invalid_pointer_argument(f);
-		}
 		void *kaddr = pagedir_get_page(t->pagedir, cursor);
 		if (kaddr == NULL) {
 			thread_exit_invalid_pointer_argument(f);
