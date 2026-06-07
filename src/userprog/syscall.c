@@ -22,6 +22,7 @@
 
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 
+static const void *VADDR_CODE_SEGMENT = (void *)0x08048000;
 static void syscall_handler(struct intr_frame *);
 
 void
@@ -51,6 +52,9 @@ check_span_is_user_vaddr(struct intr_frame *f, const void *uaddr, unsigned sz)
 	void *begin = pg_round_down(uaddr);
 	void *end = pg_round_up(uaddr + sz) - 1;
 	for (void *cursor = begin; cursor < end; cursor += PGSIZE) {
+		if (cursor == VADDR_CODE_SEGMENT) {
+			thread_exit_invalid_pointer_argument(f);
+		}
 		void *kaddr = pagedir_get_page(t->pagedir, cursor);
 		if (kaddr == NULL) {
 			thread_exit_invalid_pointer_argument(f);
