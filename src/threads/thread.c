@@ -889,11 +889,28 @@ get_vm_lock(struct thread *t)
 	return &t->vm.lock;
 }
 
-/* Reach into page.c internals. */
-extern void page_evict_internal(struct thread *t, void *upage);
+struct evict_args {
+	void *upage;
+	void *kpage_stolen;
+};
 
-void
+/* Reach into page.c internals. */
+extern void *page_evict_internal(struct thread *t, void *upage);
+
+static void
+page_evict_glue(struct thread *t, void *aux)
+{
+	struct evict_args *args = aux;
+	args->kpage_stolen = page_evict_internal(t, args->upage);
+}
+
+void *
 thread_page_evict(tid_t victim, void *upage)
 {
-	thread_call_on_match(victim, get_vm_lock, page_evict_internal, upage);
+	struct evict_args args = {
+		.upage = upage,
+		.kpage_stolen = NULL,
+	};
+	thread_call_on_match(victim, get_vm_lock, page_evict_glue, &args);
+	return args.kpage_stolen;
 }

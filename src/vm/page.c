@@ -57,10 +57,11 @@ page_less(const struct hash_elem *a_,
 }
 
 static void
-page_evict_prepare(struct thread *t, struct hash_elem *e_, bool allow_restore)
+page_evict_prepare(struct thread *t, struct hash_elem *e_, void **kpage_stolen)
 {
 	ASSERT(lock_held_by_current_thread(&t->vm.lock));
 	struct page_entry *entry = hash_entry(e_, struct page_entry, elem);
+	const bool complete_teardown = (kpage_stolen == NULL);
 
 	void *kpage = pagedir_get_page(t->pagedir, entry->upage);
 	if (kpage == NULL) {
@@ -79,20 +80,26 @@ page_evict_prepare(struct thread *t, struct hash_elem *e_, bool allow_restore)
 		release_io_lock();
 	}
 
-	if (allow_restore && entry->type == PAGE_ANONYMOUS) {
+	if (!complete_teardown && entry->type == PAGE_ANONYMOUS) {
 		struct swap_slot s = swap_save(kpage);
 		if (swap_slot_is_valid(s)) {
 			entry->anon.swap = s;
 		} else {
 			swap_slot_unset(&entry->anon.swap);
+			goto done; /* Do not evict if we cannot save to swap. */
 		}
 	}
 
 	pagedir_clear_page(t->pagedir, entry->upage);
-	palloc_free_page(kpage);
+
+	if (complete_teardown) {
+		palloc_free_page(kpage);
+	} else {
+		*kpage_stolen = kpage;
+	}
 
 done:
-	if (!allow_restore) {
+	if (complete_teardown) {
 		free(entry);
 	}
 }
@@ -101,7 +108,7 @@ static void
 page_destructor(struct hash_elem *e_, void *aux UNUSED)
 {
 	struct thread *t = thread_current();
-	page_evict_prepare(t, e_, /* allow_restore */ false);
+	page_evict_prepare(t, e_, NULL);
 }
 
 void
@@ -436,7 +443,7 @@ page_munmap(struct page_descriptor pd)
 		struct hash_elem *hash =
 			hash_delete(&t->vm.page_table, &entry->elem);
 		ASSERT(hash != NULL);
-		page_evict_prepare(t, hash, /* allow_restore */ false);
+		page_evict_prepare(t, hash, NULL);
 	}
 
 	lock_release(&t->vm.lock);
@@ -463,18 +470,21 @@ page_unpin(void *uaddr, size_t sz)
 }
 
 /* Internal API for use only by thread_page_evict(). */
-void page_evict_internal(struct thread *t, void *upage);
+void *page_evict_internal(struct thread *t, void *upage);
 
-void
+void *
 page_evict_internal(struct thread *t, void *upage)
 {
 	ASSERT(lock_held_by_current_thread(&t->vm.lock));
+	void *kpage_stolen = NULL;
 
 	struct page_entry key = {
 		.upage = upage,
 	};
 	struct hash_elem *found = hash_find(&t->vm.page_table, &key.elem);
 	if (found != NULL) {
-		page_evict_prepare(t, found, /* allow_restore */ true);
+		page_evict_prepare(t, found, &kpage_stolen);
 	}
+
+	return kpage_stolen;
 }

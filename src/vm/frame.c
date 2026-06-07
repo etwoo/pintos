@@ -8,6 +8,7 @@
 
 #include <hash.h>
 #include <list.h>
+#include <string.h>
 
 struct frame {
 	tid_t owner;
@@ -64,16 +65,11 @@ frame_get_page_maybe_swap(enum palloc_flags flags)
 
 		lock_release(&ft.lock);
 	}
-	thread_page_evict(victim_tid, victim_upage);
 
-	// TODO: handle other thread racing, allocating between when we free up
-	// a page and when we allocate ourselves
-	//
-	// reusing an existing kpage is complicated because process_exit()
-	// deallocates via page_destructor() and pagedir_destroy(); seems
-	// simpler to avoid lifetime issues
-	kpage = palloc_get_page(flags | PAL_USER);
+	kpage = thread_page_evict(victim_tid, victim_upage);
 	ASSERT(kpage != NULL && "Out-of-memory even after swapping");
+	memset(kpage, 0, PGSIZE); /* Avoid information leak between threads. */
+
 	return kpage;
 }
 
