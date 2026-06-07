@@ -223,7 +223,7 @@ syscall_read(struct intr_frame *f, int *stack)
 		const off_t bytes = file_read_at(file, kaddr, to_read, read);
 		release_io_lock();
 
-		if (bytes < 0) {
+		if (bytes <= 0) {
 			read = bytes;
 			break;
 		}
@@ -271,7 +271,7 @@ syscall_write(struct intr_frame *f, int *stack)
 			file_write_at(file, kaddr, to_write, written);
 		release_io_lock();
 
-		if (bytes < 0) {
+		if (bytes <= 0) {
 			written = bytes;
 			break;
 		}
