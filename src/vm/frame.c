@@ -9,17 +9,6 @@
 #include <hash.h>
 #include <list.h>
 
-// TODO: As a concrete example, you must not allow page faults to occur while a
-// device driver accesses a user buffer passed to file_read, because you would
-// not be able to invoke the driver while handling such faults. Preventing such
-// page faults requires cooperation between the code within which the access
-// occurs and your page eviction code. For instance, you could extend your frame
-// table to record when a page contained in a frame must not be evicted. (This
-// is also referred to as "pinning" or "locking" the page in its frame.) Pinning
-// restricts your page replacement algorithm's choices when looking for pages to
-// evict, so be sure to pin pages no longer than necessary, and avoid pinning
-// pages when it is not necessary.
-
 struct frame {
 	tid_t owner;
 	void *upage;
