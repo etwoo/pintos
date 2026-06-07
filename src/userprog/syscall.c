@@ -192,31 +192,45 @@ syscall_read(struct intr_frame *f, int *stack)
 	struct file *file = fd_to_file(fd);
 
 	unsigned sz = 0;
-	void *buffer_uaddr = NULL;
-	void *buffer = syscall_arg_peek(f, stack, &sz, &buffer_uaddr);
+	void *uaddr = NULL;
+	(void)syscall_arg_peek(f, stack, &sz, &uaddr);
 	stack += 2;
 
-	// TODO: deal with uaddr spanning non-contiguous kaddr ranges, like syscall_write
+	page_pin(uaddr, sz);
+	f->eax = IO_FAIL; /* Assume failure, in case of early exit. */
 
-	page_pin(buffer_uaddr, sz);
+	struct thread *t = thread_current();
+	off_t read = 0;
+	void *cursor = uaddr;
+	void *end = pg_round_up(uaddr + sz) - 1;
 
 	if (fd == STDIN_FILENO) {
-		if (sz == 0) {
-			f->eax = IO_FAIL;
-		} else {
-			uint8_t *p = buffer;
-			*p = input_getc();
-			f->eax = 1;
-		}
-	} else if (file != NULL) {
-		acquire_io_lock();
-		f->eax = file_read(file, buffer, sz);
-		release_io_lock();
-	} else {
-		f->eax = IO_FAIL;
+		uint8_t *p = uaddr;
+		*p = input_getc();
+		read = 1;
 	}
 
-	page_unpin(buffer_uaddr, sz);
+	while (cursor < end && file != NULL) {
+		void *kaddr = pagedir_get_page(t->pagedir, cursor);
+		void *next = pg_round_down(cursor + PGSIZE);
+		const size_t to_read = next - cursor;
+		const off_t pos = cursor - uaddr;
+
+		acquire_io_lock();
+		const off_t bytes = file_read_at(file, kaddr, to_read, pos);
+		release_io_lock();
+
+		if (bytes < 0) {
+			read = bytes;
+			break;
+		}
+
+		read += bytes;
+		cursor = next;
+	}
+
+	f->eax = read;
+	page_unpin(uaddr, sz);
 }
 
 static void
