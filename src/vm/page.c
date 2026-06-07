@@ -367,21 +367,36 @@ page_mmap(int fd, void *upage)
 	struct thread *t = thread_current();
 	pd.id = t->vm.mmap_generator++;
 
-	for (off_t pos = 0; pos < len; pos += PGSIZE) {
+	enum {
+		OK,
+		FAIL_PARTIAL,
+		FAIL_EARLY,
+	} status = OK;
+
+	for (off_t pos = 0; pos < len && status == OK; pos += PGSIZE) {
 		lock_acquire(&t->vm.lock);
 		struct page_entry *entry =
 			page_map_common(0, upage + pos, PAGE_WRITABLE);
 		if (entry == NULL) {
-			// TODO: unwind with page_munmap()
-			lock_release(&t->vm.lock);
-			pd.id = PAGE_DESCRIPTOR_ERROR; /* Unset on error. */
-			break;
+			status = (pos == 0) ? FAIL_EARLY : FAIL_PARTIAL;
+		} else {
+			entry->type = PAGE_FILE_BACKED;
+			entry->file.mmap = pd.id;
+			entry->file.fd = fd_new;
+			entry->file.pos = pos;
 		}
-		entry->type = PAGE_FILE_BACKED;
-		entry->file.mmap = pd.id;
-		entry->file.fd = fd_new;
-		entry->file.pos = pos;
 		lock_release(&t->vm.lock);
+	}
+
+	switch (status) {
+	case OK:
+		break;
+	case FAIL_PARTIAL:
+		page_munmap(pd);
+		__attribute__((fallthrough));
+	case FAIL_EARLY:
+		pd.id = PAGE_DESCRIPTOR_ERROR; /* Unset on error. */
+		break;
 	}
 
 	return pd;
