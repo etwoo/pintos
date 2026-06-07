@@ -76,6 +76,7 @@ page_evict_prepare(struct thread *t,
 		struct file *file = fd_to_file(entry->file.fd);
 		ASSERT(file != NULL);
 		acquire_io_lock();
+		// TODO: switch file_seek+file_write -> file_write_at
 		file_seek(file, entry->file.pos);
 		const off_t eof = file_length(file);
 		const off_t bytes = file_write(file, kpage, PGSIZE);
@@ -272,6 +273,7 @@ page_fault_impl(struct intr_frame *f, void *uaddr, void **kpage_out)
 		ASSERT(intr_get_level() == INTR_ON);
 		acquire_io_lock();
 		const off_t to_restore = file_tell(file);
+		// TODO: switch file_seek+file_read -> file_read_at
 		file_seek(file, pos);
 		const off_t bytes = file_read(file, kpage, PGSIZE);
 		file_seek(file, to_restore);

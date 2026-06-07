@@ -45,12 +45,18 @@ check_span_is_user_vaddr(struct intr_frame *f, const void *uaddr, unsigned sz)
 	}
 
 	struct thread *t = thread_current();
-	void *kaddr = pagedir_get_page(t->pagedir, uaddr);
-	const void *kaddr_end = pagedir_get_page(t->pagedir, uaddr_end);
-	if (kaddr == NULL || kaddr_end == NULL) {
-		thread_exit_invalid_pointer_argument(f);
+
+	void *begin = pg_round_down(uaddr);
+	void *end = pg_round_up(uaddr + sz) - 1;
+	for (void *cursor = begin; cursor < end; cursor += PGSIZE) {
+		void *kaddr = pagedir_get_page(t->pagedir, cursor);
+		if (kaddr == NULL) {
+			thread_exit_invalid_pointer_argument(f);
+		}
 	}
 
+	void *kaddr = pagedir_get_page(t->pagedir, uaddr);
+	ASSERT(kaddr != NULL); /* Guaranteed by preceding loop. */
 	return kaddr;
 }
 
@@ -190,6 +196,8 @@ syscall_read(struct intr_frame *f, int *stack)
 	void *buffer = syscall_arg_peek(f, stack, &sz, &buffer_uaddr);
 	stack += 2;
 
+	// TODO: deal with uaddr spanning non-contiguous kaddr ranges, like syscall_write
+
 	page_pin(buffer_uaddr, sz);
 
 	if (fd == STDIN_FILENO) {
@@ -218,24 +226,49 @@ syscall_write(struct intr_frame *f, int *stack)
 	struct file *file = fd_to_file(fd);
 
 	unsigned sz = 0;
-	void *buffer_uaddr = NULL;
-	void *buffer = syscall_arg_peek(f, stack, &sz, &buffer_uaddr);
+	void *uaddr = NULL;
+	(void)syscall_arg_peek(f, stack, &sz, &uaddr);
 	stack += 2;
 
-	page_pin(buffer_uaddr, sz);
+	page_pin(uaddr, sz);
 
-	if (fd == STDOUT_FILENO) {
-		putbuf(buffer, sz);
-		f->eax = sz;
-	} else if (file != NULL) {
-		acquire_io_lock();
-		f->eax = file_write(file, buffer, sz);
-		release_io_lock();
+	if (fd == STDOUT_FILENO || file != NULL) {
+		struct thread *t = thread_current();
+		off_t written = 0;
+		void *end = pg_round_up(uaddr + sz) - 1;
+
+		void *cursor = uaddr;
+		while (cursor < end) {
+			void *kaddr = pagedir_get_page(t->pagedir, cursor);
+			void *next = pg_round_down(cursor + PGSIZE);
+			const size_t seg = next - cursor;
+
+			off_t bytes = 0;
+			if (fd == STDOUT_FILENO) {
+				putbuf(kaddr, seg);
+				bytes += seg;
+			} else {
+				acquire_io_lock();
+				const off_t ofs = cursor - uaddr;
+				bytes = file_write_at(file, kaddr, seg, ofs);
+				release_io_lock();
+			}
+
+			if (bytes < 0) {
+				written = bytes;
+				break;
+			}
+
+			written += bytes;
+			cursor = next;
+		}
+
+		f->eax = written;
 	} else {
 		f->eax = IO_FAIL;
 	}
 
-	page_unpin(buffer_uaddr, sz);
+	page_unpin(uaddr, sz);
 }
 
 static void
