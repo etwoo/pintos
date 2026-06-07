@@ -81,7 +81,6 @@ page_evict_prepare(struct thread *t,
 		release_io_lock();
 	}
 
-	// TODO: also filter by pagedir_is_accessed()?
 	if (swap_anonymous_memory && entry->type == PAGE_ANONYMOUS) {
 		struct swap_slot s = swap_save(kpage);
 		if (swap_slot_is_valid(s)) {
