@@ -255,7 +255,9 @@ syscall_io_with_buffer(int syscall_number, struct intr_frame *f, int *stack)
 		release_io_lock();
 
 		if (bytes <= 0) {
-			total_bytes = bytes;
+			if (bytes < 0) {
+				total_bytes = bytes;
+			} /* else: reached EOF. */
 			break;
 		}
 
