@@ -297,7 +297,7 @@ page_fault_on(struct intr_frame *f, void *uaddr)
 }
 
 bool
-page_map(int fd, off_t pos, void *upage, enum page_rw rw)
+page_map_file_section(int fd, off_t pos, void *upage, enum page_rw rw)
 {
 	ASSERT(pos % PGSIZE == 0); /* Must be page-aligned. */
 	bool mapped = false;

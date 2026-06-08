@@ -565,7 +565,7 @@ load_segment(int fd,
 #ifdef VM
 		if (false && page_read_bytes == PGSIZE) { // TODO restore
 			const off_t pos = file_tell(file);
-			if (!page_map(fd, pos, upage, rw)) {
+			if (!page_map_file_section(fd, pos, upage, rw)) {
 				return false;
 			}
 			file_seek(file, pos + page_read_bytes);
