@@ -276,6 +276,12 @@ page_fault_impl(struct intr_frame *f, void *uaddr, void **kpage_out)
 		acquire_io_lock();
 		const off_t bytes = file_read_at(file, kpage, PGSIZE, pos);
 		release_io_lock();
+		if (bytes < 0) {
+			/* No good way to handle I/O failure when caller
+			 * depends on content to be faulted into memory. Stop
+			 * and teardown the calling thread. */
+			thread_exit(EXIT_EXCEPTION);
+		}
 		if (bytes < PGSIZE) {
 			memset(kpage + bytes, 0, PGSIZE - bytes);
 		}
