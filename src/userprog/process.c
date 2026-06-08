@@ -570,6 +570,7 @@ load_segment(int fd,
 			}
 			file_seek(file, pos + page_read_bytes);
 		} else if (false && page_zero_bytes == PGSIZE) { // TODO restore
+			// TODO: causes page-parallel to fail intermittently
 			if (!page_map_zero(upage, rw)) {
 				return false;
 			}
