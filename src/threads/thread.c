@@ -884,6 +884,8 @@ thread_signal_exit(tid_t parent, tid_t child, int child_status)
 	thread_call_on_match(parent, get_wait_lock, set_child_status, &args);
 }
 
+#ifdef VM
+
 static struct lock *
 get_vm_lock(struct thread *t)
 {
@@ -942,3 +944,5 @@ thread_page_is_accessed_test_and_set(tid_t tid, void *upage)
 	thread_call_on_match(tid, get_vm_lock, page_is_accessed, &args);
 	return args.is_accessed;
 }
+
+#endif
