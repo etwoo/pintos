@@ -5,6 +5,7 @@
 #include "filesys/file.h"
 #include "filesys/filesys.h"
 #include "threads/interrupt.h"
+#include "threads/malloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "userprog/fd.h"
@@ -34,6 +35,13 @@ static void NO_RETURN
 thread_exit_invalid_pointer_argument(struct intr_frame *f)
 {
 	f->eax = EINVAL;
+	thread_exit(EXIT_EXCEPTION);
+}
+
+static void NO_RETURN
+thread_exit_malloc_fail(struct intr_frame *f)
+{
+	f->eax = ENOMEM;
 	thread_exit(EXIT_EXCEPTION);
 }
 
@@ -74,45 +82,91 @@ check_span_is_user_vaddr(struct intr_frame *f, const void *uaddr, unsigned sz)
 	return kaddr;
 }
 
-static void *
+static void
 syscall_arg_peek(struct intr_frame *f,
                  int *stack,
-                 unsigned *got_sz,
-                 void **got_uaddr)
+                 void **got_buffer_uaddr,
+                 unsigned *got_buffer_sz,
+                 char **got_cstring)
 {
 	void *uaddr = (void *)(*stack); /* uaddr parameter on top of stack */
-	if (got_uaddr != NULL) {
-		*got_uaddr = uaddr;
+	if (got_buffer_uaddr != NULL) {
+		*got_buffer_uaddr = uaddr;
 	}
 
-	if (got_sz != NULL) {
+	if (got_buffer_sz != NULL) {
 		/* Check span using size on stack (second arg). */
-		*got_sz = *(stack + 1);
-		return check_span_is_user_vaddr(f, uaddr, *got_sz);
+		*got_buffer_sz = *(stack + 1);
+		check_span_is_user_vaddr(f, uaddr, *got_buffer_sz);
+		return;
 	}
 
 	/* Probe start of span (string length not yet known). */
 	void *kaddr = check_span_is_user_vaddr(f, uaddr, 1);
 
+	size_t cstring_sz = 0;
 	void *kaddr_pos = kaddr;
 	void *uaddr_pos = uaddr;
 	while (true) {
-		const size_t span_limit = pg_round_up(uaddr_pos) - uaddr_pos;
-		ASSERT(span_limit < PGSIZE);
+		size_t span_limit = pg_round_up(uaddr_pos) - uaddr_pos;
+		if (span_limit == 0) {
+			span_limit = PGSIZE; // TODO why?
+		}
+		ASSERT(span_limit > 0);
+		ASSERT(span_limit <= PGSIZE);
 
 		void *end = memchr(kaddr_pos, '\0', span_limit);
 		if (end != NULL) {
+			const size_t until_null = end - kaddr_pos;
+			cstring_sz += until_null;
 			/* Check last segment of overall span. */
-			check_span_is_user_vaddr(f, uaddr_pos, end - kaddr_pos);
+			check_span_is_user_vaddr(f, uaddr_pos, until_null);
 			break;
 		}
 
 		/* If next uaddr has physical/kernel mapping, keep searching. */
-		uaddr_pos = pg_round_up(uaddr_pos) + 1;
+		uaddr_pos = pg_round_up(uaddr_pos);
+		kaddr_pos = check_span_is_user_vaddr(f, uaddr_pos, 1);
+		cstring_sz += span_limit;
+	}
+
+	char *bounce = malloc(cstring_sz + 1);
+	if (bounce == NULL) {
+		thread_exit_malloc_fail(f);
+	}
+
+	char *bounce_pos = bounce;
+	kaddr_pos = kaddr;
+	uaddr_pos = uaddr;
+	while (true) {
+		ASSERT((size_t)(bounce_pos - bounce) <= cstring_sz);
+
+		size_t span_limit = pg_round_up(uaddr_pos) - uaddr_pos;
+		if (span_limit == 0) {
+			span_limit = PGSIZE; // TODO why?
+		}
+		ASSERT(span_limit > 0);
+		ASSERT(span_limit <= PGSIZE);
+
+		void *end = memchr(kaddr_pos, '\0', span_limit);
+		if (end != NULL) {
+			const size_t until_null = end - kaddr_pos;
+			ASSERT((size_t)(bounce_pos + until_null - bounce) ==
+			       cstring_sz);
+			memcpy(bounce_pos, kaddr_pos, until_null);
+			bounce_pos[until_null] = '\0';
+			break;
+		}
+
+		memcpy(bounce_pos, kaddr_pos, span_limit);
+		bounce_pos += span_limit;
+
+		uaddr_pos = pg_round_up(uaddr_pos);
 		kaddr_pos = check_span_is_user_vaddr(f, uaddr_pos, 1);
 	}
 
-	return kaddr;
+	ASSERT(got_cstring != NULL);
+	*got_cstring = bounce;
 }
 
 static void NO_RETURN
@@ -132,8 +186,11 @@ syscall_exit(struct intr_frame *f, int *stack)
 static void
 syscall_exec(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek(f, stack++, NULL, NULL);
+	char *filename = NULL;
+	syscall_arg_peek(f, stack++, NULL, NULL, &filename);
+
 	f->eax = process_execute(filename);
+	free(filename);
 }
 
 static void
@@ -146,7 +203,8 @@ syscall_wait(struct intr_frame *f, int *stack)
 static void
 syscall_create(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek(f, stack++, NULL, NULL);
+	char *filename = NULL;
+	syscall_arg_peek(f, stack++, NULL, NULL, &filename);
 	const unsigned sz = *stack++;
 
 	acquire_io_lock();
@@ -154,24 +212,28 @@ syscall_create(struct intr_frame *f, int *stack)
 	release_io_lock();
 
 	f->eax = created ? 1 : 0; /* create() returns bool, not integer code */
+	free(filename);
 }
 
 static void
 syscall_remove(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek(f, stack++, NULL, NULL);
+	char *filename = NULL;
+	syscall_arg_peek(f, stack++, NULL, NULL, &filename);
 
 	acquire_io_lock();
 	const bool removed = filesys_remove(filename);
 	release_io_lock();
 
 	f->eax = removed ? 1 : 0; /* remove() returns bool, not integer code */
+	free(filename);
 }
 
 static void
 syscall_open(struct intr_frame *f, int *stack)
 {
-	void *filename = syscall_arg_peek(f, stack++, NULL, NULL);
+	char *filename = NULL;
+	syscall_arg_peek(f, stack++, NULL, NULL, &filename);
 
 	acquire_io_lock();
 	struct file *fh = filesys_open(filename);
@@ -182,6 +244,7 @@ syscall_open(struct intr_frame *f, int *stack)
 	} else {
 		f->eax = fd_register(fh);
 	}
+	free(filename);
 }
 
 static void
@@ -205,9 +268,9 @@ syscall_io(int syscall_number, struct intr_frame *f, int *stack)
 	const int fd = *stack++;
 	struct file *file = fd_to_file(fd);
 
-	unsigned sz = 0;
 	void *uaddr = NULL;
-	(void)syscall_arg_peek(f, stack, &sz, &uaddr);
+	unsigned sz = 0;
+	syscall_arg_peek(f, stack, &uaddr, &sz, NULL);
 	stack += 2;
 
 	struct thread *t = thread_current();

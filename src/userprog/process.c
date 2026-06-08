@@ -563,7 +563,8 @@ load_segment(int fd,
 
 		/* Get page of memory. Add it to the process's address space. */
 #ifdef VM
-		if (false && page_read_bytes == PGSIZE) { // TODO restore
+		if (page_read_bytes == PGSIZE) {
+			// TODO: causes page-parallel to fail consistently
 			const off_t pos = file_tell(file);
 			if (!page_map_file_section(fd, pos, upage, rw)) {
 				return false;
