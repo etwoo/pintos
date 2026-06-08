@@ -109,18 +109,18 @@ syscall_arg_peek(struct intr_frame *f,
 
 	struct {
 		char *str;
-		size_t sz;
+		size_t len;
 	} spans[2] = {0};
 
 	void *end = memchr(kaddr, '\0', span_limit);
 	if (end != NULL) {
 		spans[0].str = kaddr;
-		spans[0].sz = end - kaddr;
+		spans[0].len = end - kaddr;
 	} else {
 		/* The remainder of this page lacks this string's null
 		 * terminator. Search the next page (in uaddr space). */
 		spans[0].str = kaddr;
-		spans[0].sz = span_limit;
+		spans[0].len = span_limit;
 
 		kaddr = check_span_is_user_vaddr(f, uaddr + span_limit, 1);
 
@@ -131,17 +131,17 @@ syscall_arg_peek(struct intr_frame *f,
 		}
 
 		spans[1].str = kaddr;
-		spans[1].sz = end - kaddr;
+		spans[1].len = end - kaddr;
 	}
 
-	const size_t len = spans[0].sz + spans[1].sz + 1;
+	const size_t len = spans[0].len + spans[1].len;
 	char *bounce = malloc(len + 1);
 	if (bounce == NULL) {
 		thread_exit_malloc_fail(f);
 	}
 
-	memcpy(bounce, spans[0].str, spans[0].sz);
-	memcpy(bounce + spans[0].sz, spans[1].str, spans[1].sz);
+	memcpy(bounce, spans[0].str, spans[0].len);
+	memcpy(bounce + spans[0].len, spans[1].str, spans[1].len);
 	bounce[len] = '\0';
 
 	ASSERT(got_cstring != NULL);
