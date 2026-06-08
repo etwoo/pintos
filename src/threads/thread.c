@@ -928,9 +928,18 @@ page_is_accessed(struct thread *t, void *aux)
 {
 	ASSERT(lock_held_by_current_thread(&t->vm.lock));
 	struct is_accessed_args *args = aux;
-	args->is_accessed = pagedir_is_accessed(t->pagedir, args->upage);
+	void *kpage = pagedir_get_page(t->pagedir, args->upage);
+	args->is_accessed =
+		/* Page accessed via user virtual address. */
+		pagedir_is_accessed(t->pagedir, args->upage) ||
+		/* Page accessed via kernel virtual address (alias). */
+		(kpage != NULL && pagedir_is_accessed(t->pagedir, kpage));
 	if (args->is_accessed) {
+		/* Clear accessed bit on both aliases. */
 		pagedir_set_accessed(t->pagedir, args->upage, false);
+		if (kpage != NULL) {
+			pagedir_set_accessed(t->pagedir, kpage, false);
+		}
 	}
 }
 
