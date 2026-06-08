@@ -523,28 +523,6 @@ validate_segment(const struct Elf32_Phdr *phdr, struct file *file)
 	return true;
 }
 
-#ifndef VM
-void *
-page_create(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
-{
-	struct thread *t = thread_current();
-	const bool writable = (rw == PAGE_WRITABLE);
-
-	void *kpage = palloc_get_page(extra_flags | PAL_USER);
-	if (kpage == NULL) {
-		return NULL;
-	}
-
-	if (pagedir_get_page(t->pagedir, upage) != NULL ||
-	    !pagedir_set_page(t->pagedir, upage, kpage, writable)) {
-		palloc_free_page(kpage);
-		return NULL;
-	}
-
-	return kpage;
-}
-#endif
-
 /* Loads a segment starting at offset OFS in FILE at address
    UPAGE.  In total, READ_BYTES + ZERO_BYTES bytes of virtual
    memory are initialized, as follows:
@@ -635,6 +613,28 @@ setup_stack(void **esp, void **kpage)
 	*esp = PHYS_BASE;
 	return true;
 }
+
+#ifndef VM
+void *
+page_create(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
+{
+	struct thread *t = thread_current();
+	const bool writable = (rw == PAGE_WRITABLE);
+
+	void *kpage = palloc_get_page(extra_flags | PAL_USER);
+	if (kpage == NULL) {
+		return NULL;
+	}
+
+	if (pagedir_get_page(t->pagedir, upage) != NULL ||
+	    !pagedir_set_page(t->pagedir, upage, kpage, writable)) {
+		palloc_free_page(kpage);
+		return NULL;
+	}
+
+	return kpage;
+}
+#endif
 
 struct stack_layout {
 	size_t stack_start;
