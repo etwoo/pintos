@@ -810,7 +810,7 @@ static void
 thread_call_on_match(tid_t target,
                      struct lock *choose_lock(struct thread *),
                      void do_work_with_lock(struct thread *, void *),
-		     void *aux)
+                     void *aux)
 {
 	if (target == TID_ERROR) {
 		return;
