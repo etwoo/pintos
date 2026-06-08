@@ -174,11 +174,11 @@ page_fault(struct intr_frame *f)
 	not_present = (f->error_code & PF_P) == 0;
 	write = (f->error_code & PF_W) != 0;
 	user = (f->error_code & PF_U) != 0;
-
+#ifdef VM
 	if (not_present && user && page_fault_on(f, fault_addr)) {
 		return;
 	}
-
+#endif
 	printf("Page fault at %p: %s error %s page in %s context.\n",
 	       fault_addr,
 	       not_present ? "not present" : "rights violation",

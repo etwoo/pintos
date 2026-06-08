@@ -114,9 +114,9 @@ start_process(void *args_)
 	char *file_name = args->file_name;
 	struct intr_frame if_ = {0};
 	bool success = false;
-
+#ifdef VM
 	page_init();
-
+#endif
 	/* Initialize interrupt frame and load executable. */
 	memset(&if_, 0, sizeof if_);
 	if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
@@ -213,10 +213,10 @@ process_exit(int status)
 
 	const bool early_error_in_load = (status == EXIT_NO_LOAD);
 	status = early_error_in_load ? EXIT_EXCEPTION : status;
-
+#ifdef VM
 	/* Flush dirty pages to disk, and clear address mappings. */
 	page_destroy();
-
+#endif
 	/* Destroy the current process's page directory and switch back
 	   to the kernel-only page directory. */
 	pd = cur->pagedir;
@@ -523,6 +523,28 @@ validate_segment(const struct Elf32_Phdr *phdr, struct file *file)
 	return true;
 }
 
+#ifndef VM
+void *
+page_create(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
+{
+	struct thread *t = thread_current();
+	const bool writable = (rw == PAGE_WRITABLE);
+
+	void *kpage = palloc_get_page(extra_flags | PAL_USER);
+	if (kpage == NULL) {
+		return NULL;
+	}
+
+	if (pagedir_get_page(t->pagedir, upage) != NULL ||
+	    !pagedir_set_page(t->pagedir, upage, kpage, writable)) {
+		palloc_free_page(kpage);
+		return NULL;
+	}
+
+	return kpage;
+}
+#endif
+
 /* Loads a segment starting at offset OFS in FILE at address
    UPAGE.  In total, READ_BYTES + ZERO_BYTES bytes of virtual
    memory are initialized, as follows:
@@ -562,6 +584,7 @@ load_segment(int fd,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* Get page of memory. Add it to the process's address space. */
+#ifdef VM
 		if (false && page_read_bytes == PGSIZE) { // TODO restore
 			const off_t pos = file_tell(file);
 			if (!page_map(fd, pos, upage, rw)) {
@@ -573,7 +596,9 @@ load_segment(int fd,
 				return false;
 			}
 			ASSERT(page_read_bytes == 0);
-		} else {
+		} else
+#endif
+		{
 			uint8_t *kpage = page_create(0, upage, rw);
 			if (kpage == NULL) {
 				return false;

@@ -59,8 +59,13 @@ check_span_is_user_vaddr(struct intr_frame *f, const void *uaddr, unsigned sz)
 	void *end = pg_round_up(uaddr + sz) - 1;
 	for (void *cursor = begin; cursor < end; cursor += PGSIZE) {
 		void *kaddr = pagedir_get_page(t->pagedir, cursor);
-		if (kaddr == NULL && !page_fault_on(f, cursor)) {
-			thread_exit_invalid_pointer_argument(f);
+		if (kaddr == NULL) {
+#ifdef VM
+			if (!page_fault_on(f, cursor))
+#endif
+			{
+				thread_exit_invalid_pointer_argument(f);
+			}
 		}
 	}
 
@@ -207,9 +212,9 @@ syscall_io(int syscall_number, struct intr_frame *f, int *stack)
 
 	struct thread *t = thread_current();
 	off_t total_bytes = 0;
-
+#ifdef VM
 	page_pin(uaddr, sz);
-
+#endif
 	switch (syscall_number) {
 	case SYS_READ:
 		if (fd == STDIN_FILENO) {
@@ -262,9 +267,9 @@ syscall_io(int syscall_number, struct intr_frame *f, int *stack)
 
 		total_bytes += bytes;
 	}
-
+#ifdef VM
 	page_unpin(uaddr, sz);
-
+#endif
 	f->eax = total_bytes;
 }
 
@@ -320,19 +325,29 @@ syscall_close(struct intr_frame *f, int *stack)
 static void
 syscall_mmap(struct intr_frame *f, int *stack)
 {
+#ifdef VM
 	const int fd = *stack++;
 	uintptr_t uaddr = *stack++;
 	f->eax = page_mmap(fd, (void *)uaddr).id;
+#else
+	(void)stack; /* Unused. */
+	f->eax = ENOSYS;
+#endif
 }
 
 static void
 syscall_munmap(struct intr_frame *f, int *stack)
 {
+#ifdef VM
 	const struct page_descriptor pd = {
 		.id = *stack++,
 	};
 	page_munmap(pd);
 	f->eax = IO_SUCCESS;
+#else
+	(void)stack; /* Unused. */
+	f->eax = ENOSYS;
+#endif
 }
 
 static void
