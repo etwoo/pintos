@@ -8,6 +8,7 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
+#include "userprog/pagedir.h"
 #include "vm/page.h"
 
 #include <array.h>
@@ -913,4 +914,31 @@ thread_page_evict(tid_t victim, void *upage)
 	};
 	thread_call_on_match(victim, get_vm_lock, page_evict_glue, &args);
 	return args.kpage_stolen;
+}
+
+struct is_accessed_args {
+	void *upage;
+	bool is_accessed;
+};
+
+static void
+page_is_accessed(struct thread *t, void *aux)
+{
+	ASSERT(lock_held_by_current_thread(&t->vm.lock));
+	struct is_accessed_args *args = aux;
+	args->is_accessed = pagedir_is_accessed(t->pagedir, args->upage);
+	if (args->is_accessed) {
+		pagedir_set_accessed(t->pagedir, args->upage, false);
+	}
+}
+
+bool
+thread_page_is_accessed_test_and_set(tid_t tid, void *upage)
+{
+	struct is_accessed_args args = {
+		.upage = upage,
+		.is_accessed = false,
+	};
+	thread_call_on_match(tid, get_vm_lock, page_is_accessed, &args);
+	return args.is_accessed;
 }

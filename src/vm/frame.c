@@ -40,30 +40,40 @@ frame_get_page_maybe_swap(enum palloc_flags flags)
 
 	tid_t victim_tid = TID_ERROR;
 	void *victim_upage = NULL;
-	{
-		lock_acquire(&ft.lock);
 
-		// TODO: second-chance replacement instead of pure FIFO
+	lock_acquire(&ft.lock);
+
+	/* Second-chance page replacement algorithm */
+	for (size_t i = 0; i < 2 && victim_tid == TID_ERROR; ++i) {
 		struct list_elem *e = list_begin(&ft.table);
 		for (; e != list_end(&ft.table); e = list_next(e)) {
 			struct frame *candidate =
 				list_entry(e, struct frame, elem);
-			if (!candidate->pinned) {
-				list_remove(e); /* Pop first unpinned entry. */
-				break;
+			if (candidate->pinned) {
+				continue;
 			}
+
+			/* Checking each frame like this means O(N*M) runtime,
+			 * where N == # of frames, M == # of threads because
+			 * thread lookup requires linear scan of all_list. */
+			if (i == 0 && thread_page_is_accessed_test_and_set(
+					      candidate->owner,
+					      candidate->upage)) {
+				continue;
+			}
+
+			list_remove(e);
+
+			struct frame *fr = list_entry(e, struct frame, elem);
+			victim_tid = fr->owner;
+			victim_upage = fr->upage;
+			free(fr);
+
+			break;
 		}
-		ASSERT(e != list_end(&ft.table));
-
-		struct frame *fr = list_entry(e, struct frame, elem);
-		victim_tid = fr->owner;
-		victim_upage = fr->upage;
-
-		ASSERT(!fr->pinned);
-		free(fr);
-
-		lock_release(&ft.lock);
 	}
+
+	lock_release(&ft.lock);
 
 	kpage = thread_page_evict(victim_tid, victim_upage);
 	ASSERT(kpage != NULL && "Out-of-memory even after swapping");
