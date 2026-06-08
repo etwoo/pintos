@@ -104,66 +104,45 @@ syscall_arg_peek(struct intr_frame *f,
 	/* Probe start of span (string length not yet known). */
 	void *kaddr = check_span_is_user_vaddr(f, uaddr, 1);
 
-	size_t cstring_sz = 0;
-	void *kaddr_pos = kaddr;
-	void *uaddr_pos = uaddr;
-	while (true) {
-		size_t span_limit = pg_round_up(uaddr_pos) - uaddr_pos;
-		if (span_limit == 0) {
-			span_limit = PGSIZE; // TODO why?
-		}
-		ASSERT(span_limit > 0);
-		ASSERT(span_limit <= PGSIZE);
+	const size_t span_limit = pg_round_up(uaddr) - uaddr;
+	ASSERT(span_limit > 0 && span_limit <= PGSIZE);
 
-		void *end = memchr(kaddr_pos, '\0', span_limit);
-		if (end != NULL) {
-			const size_t until_null = end - kaddr_pos;
-			cstring_sz += until_null;
-			/* Check last segment of overall span. */
-			check_span_is_user_vaddr(f, uaddr_pos, until_null);
-			break;
+	struct {
+		char *str;
+		size_t sz;
+	} spans[2] = {0};
+
+	void *end = memchr(kaddr, '\0', span_limit);
+	if (end != NULL) {
+		spans[0].str = kaddr;
+		spans[0].sz = end - kaddr;
+	} else {
+		/* The remainder of this page lacks this string's null
+		 * terminator. Search the next page (in uaddr space). */
+		spans[0].str = kaddr;
+		spans[0].sz = span_limit;
+
+		kaddr = check_span_is_user_vaddr(f, uaddr + span_limit, 1);
+
+		end = memchr(kaddr, '\0', PGSIZE);
+		if (end == NULL) {
+			/* Next page lacks null terminator as well. */
+			thread_exit_invalid_pointer_argument(f);
 		}
 
-		/* If next uaddr has physical/kernel mapping, keep searching. */
-		uaddr_pos = pg_round_up(uaddr_pos);
-		kaddr_pos = check_span_is_user_vaddr(f, uaddr_pos, 1);
-		cstring_sz += span_limit;
+		spans[1].str = kaddr;
+		spans[1].sz = end - kaddr;
 	}
 
-	char *bounce = malloc(cstring_sz + 1);
+	const size_t len = spans[0].sz + spans[1].sz + 1;
+	char *bounce = malloc(len + 1);
 	if (bounce == NULL) {
 		thread_exit_malloc_fail(f);
 	}
 
-	char *bounce_pos = bounce;
-	kaddr_pos = kaddr;
-	uaddr_pos = uaddr;
-	while (true) {
-		ASSERT((size_t)(bounce_pos - bounce) <= cstring_sz);
-
-		size_t span_limit = pg_round_up(uaddr_pos) - uaddr_pos;
-		if (span_limit == 0) {
-			span_limit = PGSIZE; // TODO why?
-		}
-		ASSERT(span_limit > 0);
-		ASSERT(span_limit <= PGSIZE);
-
-		void *end = memchr(kaddr_pos, '\0', span_limit);
-		if (end != NULL) {
-			const size_t until_null = end - kaddr_pos;
-			ASSERT((size_t)(bounce_pos + until_null - bounce) ==
-			       cstring_sz);
-			memcpy(bounce_pos, kaddr_pos, until_null);
-			bounce_pos[until_null] = '\0';
-			break;
-		}
-
-		memcpy(bounce_pos, kaddr_pos, span_limit);
-		bounce_pos += span_limit;
-
-		uaddr_pos = pg_round_up(uaddr_pos);
-		kaddr_pos = check_span_is_user_vaddr(f, uaddr_pos, 1);
-	}
+	memcpy(bounce, spans[0].str, spans[0].sz);
+	memcpy(bounce + spans[0].sz, spans[1].str, spans[1].sz);
+	bounce[len] = '\0';
 
 	ASSERT(got_cstring != NULL);
 	*got_cstring = bounce;
