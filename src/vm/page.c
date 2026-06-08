@@ -18,6 +18,7 @@ enum page_type {
 	PAGE_FILE_BACKED,
 };
 
+static const int PAGE_DESCRIPTOR_ERROR = -1;
 static const int MMAP_ID_UNSET = -2;
 
 struct page_entry {

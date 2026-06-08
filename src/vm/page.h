@@ -17,7 +17,6 @@ bool page_map_file_section(int fd, off_t pos, void *upage, enum page_rw rw);
 bool page_map_zero(void *upage, enum page_rw rw);
 void *page_create(enum palloc_flags extra_flags, void *upage, enum page_rw rw);
 
-#define PAGE_DESCRIPTOR_ERROR -1
 struct page_descriptor {
 	int id;
 };
