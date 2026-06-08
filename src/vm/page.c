@@ -166,7 +166,7 @@ is_stack_access(struct intr_frame *f, void *uaddr)
 }
 
 static struct page_entry *
-page_map_common(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
+page_map(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 {
 	struct thread *t = thread_current();
 	ASSERT(t->vm.initialized);
@@ -231,13 +231,11 @@ page_fault_impl(struct intr_frame *f, void *uaddr, void **kpage_out)
 		struct hash_elem *e = hash_find(&t->vm.page_table, &key.elem);
 		struct page_entry *entry = NULL;
 		if (e != NULL) {
-			/* Found mapping registered by page_map_common(). */
+			/* Found mapping registered by page_map(). */
 			entry = hash_entry(e, struct page_entry, elem);
 		} else if (is_stack_access(f, uaddr)) {
 			/* Register new mapping to accomodate stack growth. */
-			entry = page_map_common(PAL_ZERO,
-			                        key.upage,
-			                        PAGE_WRITABLE);
+			entry = page_map(PAL_ZERO, key.upage, PAGE_WRITABLE);
 			ASSERT(entry->type == PAGE_ANONYMOUS);
 		}
 
@@ -305,7 +303,7 @@ page_map_file_section(int fd, off_t pos, void *upage, enum page_rw rw)
 	struct thread *t = thread_current();
 	lock_acquire(&t->vm.lock);
 	{
-		struct page_entry *entry = page_map_common(0, upage, rw);
+		struct page_entry *entry = page_map(0, upage, rw);
 		if (entry != NULL) {
 			struct file *file = fd_to_file(fd);
 			ASSERT(file != NULL);
@@ -328,7 +326,7 @@ page_map_zero(void *upage, enum page_rw rw)
 {
 	struct thread *t = thread_current();
 	lock_acquire(&t->vm.lock);
-	const bool mapped = (page_map_common(PAL_ZERO, upage, rw) != NULL);
+	const bool mapped = (page_map(PAL_ZERO, upage, rw) != NULL);
 	lock_release(&t->vm.lock);
 	return mapped;
 }
@@ -339,7 +337,7 @@ page_create(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 	struct thread *t = thread_current();
 
 	lock_acquire(&t->vm.lock);
-	const bool mapped = (page_map_common(extra_flags, upage, rw) != NULL);
+	const bool mapped = (page_map(extra_flags, upage, rw) != NULL);
 	lock_release(&t->vm.lock);
 
 	if (!mapped) {
@@ -385,7 +383,7 @@ page_mmap(int fd, void *upage)
 	for (off_t pos = 0; pos < len && status == OK; pos += PGSIZE) {
 		lock_acquire(&t->vm.lock);
 		struct page_entry *entry =
-			page_map_common(0, upage + pos, PAGE_WRITABLE);
+			page_map(0, upage + pos, PAGE_WRITABLE);
 		if (entry == NULL) {
 			status = (pos == 0) ? FAIL_EARLY : FAIL_PARTIAL;
 		} else {
