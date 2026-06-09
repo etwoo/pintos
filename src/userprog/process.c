@@ -576,6 +576,7 @@ load_segment(int fd,
 			}
 			file_seek(file, pos + page_read_bytes);
 		} else if (page_zero_bytes == PGSIZE) {
+			// TODO: causes page-parallel to fail ~30% of runs
 			if (!page_map_zero(upage, rw)) {
 				goto err;
 			}
