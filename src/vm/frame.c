@@ -33,7 +33,7 @@ frame_init(void)
 static void *
 frame_get_page_maybe_swap(enum palloc_flags flags)
 {
-	void *kpage = palloc_get_page(flags | PAL_USER);
+	void *kpage = palloc_get_page(flags | PAL_ZERO | PAL_USER);
 	if (kpage != NULL) {
 		return kpage;
 	}
