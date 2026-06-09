@@ -570,14 +570,12 @@ load_segment(int fd,
 		/* Get page of memory. Add it to the process's address space. */
 #ifdef VM
 		if (page_read_bytes == PGSIZE) {
-			// TODO: with this block enabled, below block disabled, and --mem=2, page-parallel userspace check failed 8/10 times (before dying on OOM)
 			const off_t pos = file_tell(file);
 			if (!page_map_file_section(fd, pos, upage, rw)) {
 				goto err;
 			}
 			file_seek(file, pos + page_read_bytes);
 		} else if (page_zero_bytes == PGSIZE) {
-			// TODO: with this block enabled, above block disabled, and --mem=2, page-parallel userspace check failed 4/10 times (before dying on OOM)
 			if (!page_map_zero(upage, rw)) {
 				goto err;
 			}

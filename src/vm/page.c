@@ -87,6 +87,10 @@ page_evict_prepare(struct thread *t, struct hash_elem *e_, void **kpage_stolen)
 	const bool complete_teardown = (kpage_stolen == NULL);
 
 	void *kpage = pagedir_get_page(t->pagedir, entry->upage);
+
+	/* Clear unconditionally to flush TLB, even if kpage == NULL. */
+	pagedir_clear_page(t->pagedir, entry->upage);
+
 	if (kpage == NULL) {
 		/* This page was mapped but never faulted. */
 		goto done;
@@ -112,8 +116,6 @@ page_evict_prepare(struct thread *t, struct hash_elem *e_, void **kpage_stolen)
 			goto done; /* Do not evict if we cannot save to swap. */
 		}
 	}
-
-	pagedir_clear_page(t->pagedir, entry->upage);
 
 	if (complete_teardown) {
 		palloc_free_page(kpage);
