@@ -568,7 +568,7 @@ load_segment(int fd,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* Get page of memory. Add it to the process's address space. */
-#if 0 // TODO: restore, page-parallel fails even with this commented out, if we force more swap by passing --mem=2 parameter to pintos
+#ifdef VM
 		if (page_read_bytes == PGSIZE) {
 			const off_t pos = file_tell(file);
 			if (!page_map_file_section(fd, pos, upage, rw)) {
@@ -576,6 +576,7 @@ load_segment(int fd,
 			}
 			file_seek(file, pos + page_read_bytes);
 		} else if (page_zero_bytes == PGSIZE) {
+			// TODO: causes page-parallel to fail ~30% of runs
 			if (!page_map_zero(upage, rw)) {
 				goto err;
 			}
