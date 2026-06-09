@@ -363,8 +363,9 @@ page_map_zero(void *upage, enum page_rw rw)
 static bool
 fill_bytes(void *kpage, void *aux)
 {
-	void *start_bytes = aux;
-	memcpy(kpage, start_bytes, PGSIZE);
+	if (aux != NULL) {
+		memcpy(kpage, aux, PGSIZE);
+	}
 	return true;
 }
 
