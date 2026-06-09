@@ -10,7 +10,7 @@
 #include <list.h>
 
 struct frame {
-	tid_t owner; // TODO: need to update this when stealing!!!
+	tid_t owner;
 	void *upage;
 	bool pinned;
 	struct list_elem elem;
