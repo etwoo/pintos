@@ -180,6 +180,12 @@ struct thread *thread_pop_by_priority(struct list *threads);
 
 void thread_signal_exit(tid_t parent, tid_t child, int child_status);
 void *thread_page_evict(tid_t victim, void *upage);
-bool thread_page_is_accessed_test_and_set(tid_t tid, void *upage);
+
+enum thread_page {
+	THREAD_PAGE_IS_ACCESSED,
+	THREAD_PAGE_NOT_ACCESSED,
+	THREAD_PAGE_UNKNOWN, /* Inaccessible page_table, e.g. dying thread. */
+};
+enum thread_page thread_page_is_accessed_test_and_set(tid_t tid, void *upage);
 
 #endif /* threads/thread.h */

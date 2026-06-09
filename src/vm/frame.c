@@ -10,7 +10,7 @@
 #include <list.h>
 
 struct frame {
-	tid_t owner;
+	tid_t owner; // TODO: need to update this when stealing!!!
 	void *upage;
 	bool pinned;
 	struct list_elem elem;
@@ -56,9 +56,17 @@ frame_get_page_maybe_swap(enum palloc_flags flags)
 			/* Checking each frame like this means O(N*M) runtime,
 			 * where N == # of frames, M == # of threads because
 			 * thread lookup requires linear scan of all_list. */
-			if (i == 0 && thread_page_is_accessed_test_and_set(
-					      candidate->owner,
-					      candidate->upage)) {
+			switch (thread_page_is_accessed_test_and_set(
+				candidate->owner,
+				candidate->upage)) {
+			case THREAD_PAGE_IS_ACCESSED:
+				if (i == 0) {
+					continue;
+				}
+				break;
+			case THREAD_PAGE_NOT_ACCESSED:
+				break;
+			case THREAD_PAGE_UNKNOWN:
 				continue;
 			}
 

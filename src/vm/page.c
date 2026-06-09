@@ -524,7 +524,11 @@ void *
 page_evict_internal(struct thread *t, void *upage)
 {
 	ASSERT(lock_held_by_current_thread(&t->vm.lock));
-	ASSERT(t->vm.initialized);
+
+	if (!t->vm.initialized) {
+		return NULL;
+	}
+
 	void *kpage_stolen = NULL;
 
 	struct page_entry key = {

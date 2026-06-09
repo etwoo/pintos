@@ -920,6 +920,7 @@ thread_page_evict(tid_t victim, void *upage)
 
 struct is_accessed_args {
 	void *upage;
+	bool found_thread;
 	bool is_accessed;
 };
 
@@ -927,7 +928,10 @@ static void
 page_is_accessed(struct thread *t, void *aux)
 {
 	ASSERT(lock_held_by_current_thread(&t->vm.lock));
+
 	struct is_accessed_args *args = aux;
+	args->found_thread = true;
+
 	void *kpage = pagedir_get_page(t->pagedir, args->upage);
 	args->is_accessed =
 		/* Page accessed via user virtual address. */
@@ -943,15 +947,23 @@ page_is_accessed(struct thread *t, void *aux)
 	}
 }
 
-bool
+enum thread_page
 thread_page_is_accessed_test_and_set(tid_t tid, void *upage)
 {
 	struct is_accessed_args args = {
 		.upage = upage,
+		.found_thread = false,
 		.is_accessed = false,
 	};
 	thread_call_on_match(tid, get_vm_lock, page_is_accessed, &args);
-	return args.is_accessed;
+	if (!args.found_thread) {
+		ASSERT(!args.is_accessed);
+		return THREAD_PAGE_UNKNOWN;
+	} else if (args.is_accessed) {
+		return THREAD_PAGE_IS_ACCESSED;
+	} else {
+		return THREAD_PAGE_NOT_ACCESSED;
+	}
 }
 
 #endif
