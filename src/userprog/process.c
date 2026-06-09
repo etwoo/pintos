@@ -627,7 +627,10 @@ setup_stack(void **esp, void **kpage)
 
 #ifndef VM
 void *
-page_create(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
+page_create(enum palloc_flags extra_flags,
+            void *upage,
+            enum page_rw rw,
+            void *start_bytes)
 {
 	struct thread *t = thread_current();
 	const bool writable = (rw == PAGE_WRITABLE);
@@ -635,6 +638,10 @@ page_create(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 	void *kpage = palloc_get_page(extra_flags | PAL_USER);
 	if (kpage == NULL) {
 		return NULL;
+	}
+
+	if (start_bytes != NULL) {
+		memcpy(kpage, start_bytes, PGSIZE);
 	}
 
 	if (pagedir_get_page(t->pagedir, upage) != NULL ||
