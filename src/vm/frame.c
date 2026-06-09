@@ -81,7 +81,11 @@ frame_get_page_maybe_swap(enum palloc_flags flags)
 }
 
 void *
-frame_get_page(void *upage, enum palloc_flags flags, enum page_rw rw)
+frame_get_page(void *upage,
+               enum palloc_flags flags,
+               enum page_rw rw,
+               bool fill_page(void *, void *),
+               void *aux)
 {
 	struct thread *t = thread_current();
 	ASSERT(pagedir_get_page(t->pagedir, upage) == NULL);
@@ -99,7 +103,8 @@ frame_get_page(void *upage, enum palloc_flags flags, enum page_rw rw)
 	fr->pinned = false;
 
 	const bool writable = (rw == PAGE_WRITABLE);
-	if (!pagedir_set_page(t->pagedir, upage, kpage, writable)) {
+	if (!fill_page(kpage, aux) ||
+	    !pagedir_set_page(t->pagedir, upage, kpage, writable)) {
 		palloc_free_page(kpage);
 		free(fr);
 		return NULL;

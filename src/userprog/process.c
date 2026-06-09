@@ -546,11 +546,17 @@ load_segment(int fd,
              uint32_t zero_bytes,
              bool writable)
 {
+	bool success = false;
 	ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
 	ASSERT(pg_ofs(upage) == 0);
 	ASSERT(ofs % PGSIZE == 0);
 	ASSERT(io_lock_held_by_current_thread());
 	const enum page_rw rw = writable ? PAGE_WRITABLE : PAGE_READONLY;
+
+	void *scratch = malloc(PGSIZE);
+	if (scratch == NULL) {
+		goto err;
+	}
 
 	file_seek(file, ofs);
 	while (read_bytes > 0 || zero_bytes > 0) {
@@ -567,28 +573,29 @@ load_segment(int fd,
 			// TODO: causes page-parallel to fail consistently
 			const off_t pos = file_tell(file);
 			if (!page_map_file_section(fd, pos, upage, rw)) {
-				return false;
+				goto err;
 			}
 			file_seek(file, pos + page_read_bytes);
 		} else if (false && page_zero_bytes == PGSIZE) { // TODO restore
 			// TODO: causes page-parallel to fail intermittently
 			if (!page_map_zero(upage, rw)) {
-				return false;
+				goto err;
 			}
 			ASSERT(page_read_bytes == 0);
 		} else
 #endif
 		{
-			uint8_t *kpage = page_create(0, upage, rw);
-			if (kpage == NULL) {
-				return false;
-			}
 			/* Load this page. */
-			if (file_read(file, kpage, page_read_bytes) !=
-			    (int)page_read_bytes) {
-				return false;
+			const off_t bytes =
+				file_read(file, scratch, page_read_bytes);
+			if (bytes < 0 || (size_t)bytes != page_read_bytes) {
+				goto err;
 			}
-			memset(kpage + page_read_bytes, 0, page_zero_bytes);
+			memset(scratch + page_read_bytes, 0, page_zero_bytes);
+			if (page_create(0, upage, rw, scratch) == NULL) {
+				goto err;
+			}
+
 		}
 
 		/* Advance. */
@@ -596,7 +603,11 @@ load_segment(int fd,
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
 	}
-	return true;
+
+	success = true;
+err:
+	free(scratch);
+	return success;
 }
 
 /* Create a minimal stack by mapping a zeroed page at the top of
@@ -607,7 +618,7 @@ setup_stack(void **esp, void **kpage)
 	ASSERT(kpage != NULL && *kpage == NULL);
 	void *upage = PHYS_BASE - PGSIZE;
 
-	*kpage = page_create(PAL_ZERO, upage, PAGE_WRITABLE);
+	*kpage = page_create(PAL_ZERO, upage, PAGE_WRITABLE, NULL);
 	if (*kpage == NULL) {
 		return false;
 	}
