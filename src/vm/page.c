@@ -81,6 +81,8 @@ static void
 page_evict_prepare(struct thread *t, struct hash_elem *e_, void **kpage_stolen)
 {
 	ASSERT(lock_held_by_current_thread(&t->vm.lock));
+	ASSERT(t->vm.initialized);
+
 	struct page_entry *entry = hash_entry(e_, struct page_entry, elem);
 	const bool complete_teardown = (kpage_stolen == NULL);
 
@@ -153,6 +155,7 @@ page_destroy(void)
 	lock_acquire(&t->vm.lock);
 	ASSERT(t->vm.initialized);
 	hash_destroy(&t->vm.page_table, page_destructor);
+	t->vm.initialized = false;
 	lock_release(&t->vm.lock);
 
 	frame_clear(t->tid);
@@ -190,8 +193,8 @@ static struct page_entry *
 page_map(enum palloc_flags extra_flags, void *upage, enum page_rw rw)
 {
 	struct thread *t = thread_current();
-	ASSERT(t->vm.initialized);
 	ASSERT(lock_held_by_current_thread(&t->vm.lock));
+	ASSERT(t->vm.initialized);
 
 	if (upage == NULL) {
 		/* Reject mapping at address zero. */
@@ -331,6 +334,7 @@ page_map_file_section(int fd, off_t pos, void *upage, enum page_rw rw)
 
 	struct thread *t = thread_current();
 	lock_acquire(&t->vm.lock);
+	ASSERT(t->vm.initialized);
 	{
 		struct page_entry *entry = page_map(0, upage, rw);
 		if (entry != NULL) {
@@ -355,6 +359,7 @@ page_map_zero(void *upage, enum page_rw rw)
 {
 	struct thread *t = thread_current();
 	lock_acquire(&t->vm.lock);
+	ASSERT(t->vm.initialized);
 	const bool mapped = (page_map(PAL_ZERO, upage, rw) != NULL);
 	lock_release(&t->vm.lock);
 	return mapped;
@@ -378,6 +383,7 @@ page_create(enum palloc_flags extra_flags,
 	struct thread *t = thread_current();
 
 	lock_acquire(&t->vm.lock);
+	ASSERT(t->vm.initialized);
 	const bool mapped = (page_map(extra_flags, upage, rw) != NULL);
 	lock_release(&t->vm.lock);
 
@@ -422,6 +428,7 @@ page_mmap(int fd, void *upage)
 
 	for (off_t pos = 0; pos < len && status == OK; pos += PGSIZE) {
 		lock_acquire(&t->vm.lock);
+		ASSERT(t->vm.initialized);
 		struct page_entry *entry =
 			page_map(0, upage + pos, PAGE_WRITABLE);
 		if (entry == NULL) {
@@ -460,6 +467,7 @@ page_munmap(struct page_descriptor pd)
 	list_init(&to_unmap);
 
 	lock_acquire(&t->vm.lock);
+	ASSERT(t->vm.initialized);
 
 	hash_first(&i, &t->vm.page_table);
 	while (hash_next(&i)) {
@@ -516,6 +524,7 @@ void *
 page_evict_internal(struct thread *t, void *upage)
 {
 	ASSERT(lock_held_by_current_thread(&t->vm.lock));
+	ASSERT(t->vm.initialized);
 	void *kpage_stolen = NULL;
 
 	struct page_entry key = {
