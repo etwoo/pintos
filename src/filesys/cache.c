@@ -203,74 +203,68 @@ assert_sector_pos_sz_in_range(int pos, int sz)
 bool
 cache_read(block_sector_t sector, int pos, int sz, void *buffer)
 {
-	bool success = false;
 	lock_acquire(&fs_cache.lock);
 
 	struct cache_block *cached = cache_find(sector);
+	ASSERT(cached != NULL);
+
 	switch (cached->state) {
 	case CACHE_UNUSED:
 		/* Cache miss. Populate assigned cache entry. */
 		cache_read_async(sector, cached);
 		break;
-	case CACHE_READ_QUEUED:
-		/* All cache slots are busy with in-flight reads. A smarter
-		 * implementation would probably wait, but I don't expect this
-		 * to happen in practice, especially given all IOPS currently
-		 * serialize on a single per-disk lock. Fail fast here, and let
-		 * callers handle fallible I/O. */
-		cached = NULL;
-		break;
 	case CACHE_POPULATED:
 	case CACHE_DIRTY:
 		/* Cache hit. Copy value to caller. */
 		break;
+	case CACHE_READ_QUEUED:
+		/* cache_find() should never return entries in this state. */
+		NOT_REACHED();
+		break;
 	}
 
-	if (cached != NULL) {
-		success = true;
-		ASSERT(cached->sector == sector);
-		assert_sector_pos_sz_in_range(pos, sz);
-		memcpy(buffer, cached->data + pos, sz);
-		cached->accessed_at = timer_ticks();
-	}
+	ASSERT(cached->sector == sector);
+	assert_sector_pos_sz_in_range(pos, sz);
+	memcpy(buffer, cached->data + pos, sz);
+	cached->accessed_at = timer_ticks();
 
 	lock_release(&fs_cache.lock);
-	return success;
+	return true;
 }
 
 bool
 cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 {
-	bool success = false;
 	lock_acquire(&fs_cache.lock);
 
 	struct cache_block *cached = cache_find(sector);
+	ASSERT(cached != NULL);
+
 	switch (cached->state) {
 	case CACHE_UNUSED:
-	case CACHE_POPULATED:
-	case CACHE_DIRTY:
-		break;
-	case CACHE_READ_QUEUED:
-		// TODO: wait behind existing queued read; if this means
-		// multiple threads can wait on the same request, change
-		// cond_signal() to cond_broadcast() in cache_read_async()
-		ASSERT(false);
-		cached = NULL;
-		break;
-	}
-
-	if (cached != NULL) {
-		success = true;
-		if (cached->state == CACHE_UNUSED && sz < BLOCK_SECTOR_SIZE) {
+		if (sz < BLOCK_SECTOR_SIZE) {
+			/* Cache miss on partial write. Read existing values
+			 * surrounding the target [pos, pos+sz] range, which
+			 * the caller expects to remain unchanged. */
 			cache_read_async(sector, cached);
 		}
-		cached->state = CACHE_DIRTY;
-		cached->sector = sector;
-		assert_sector_pos_sz_in_range(pos, sz);
-		memcpy(cached->data + pos, buffer, sz);
-		cached->accessed_at = timer_ticks();
+		break;
+	case CACHE_POPULATED:
+	case CACHE_DIRTY:
+		/* Cache hit. Update existing value. */
+		break;
+	case CACHE_READ_QUEUED:
+		/* cache_find() should never return entries in this state. */
+		NOT_REACHED();
+		break;
 	}
 
+	cached->state = CACHE_DIRTY;
+	cached->sector = sector;
+	assert_sector_pos_sz_in_range(pos, sz);
+	memcpy(cached->data + pos, buffer, sz);
+	cached->accessed_at = timer_ticks();
+
 	lock_release(&fs_cache.lock);
-	return success;
+	return true;
 }
