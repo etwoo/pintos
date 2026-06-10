@@ -217,7 +217,10 @@ inode_read_at(struct inode *inode, void *buffer, off_t size, off_t offset)
 			break;
 
 		/* Read sector (or chunk within sector) via buffer cache. */
-		if (!cache_read(sector_idx, buffer + bytes_read, chunk_size)) {
+		if (!cache_read(sector_idx,
+		                sector_ofs,
+		                chunk_size,
+		                buffer + bytes_read)) {
 			break;
 		}
 

@@ -140,9 +140,11 @@ cache_read_async(block_sector_t sector, struct cache_block *to_fill)
 }
 
 bool
-cache_read(block_sector_t sector, void *buffer, size_t bytes)
+cache_read(block_sector_t sector, int pos, int sz, void *buffer)
 {
-	ASSERT(bytes <= BLOCK_SECTOR_SIZE);
+	ASSERT(0 <= pos && pos <= BLOCK_SECTOR_SIZE);
+	ASSERT(0 <= sz && sz <= BLOCK_SECTOR_SIZE);
+	ASSERT(pos + sz <= BLOCK_SECTOR_SIZE);
 	bool success = false;
 
 	lock_acquire(&fs_cache.lock);
@@ -169,7 +171,7 @@ cache_read(block_sector_t sector, void *buffer, size_t bytes)
 	if (cached != NULL) {
 		success = true;
 		ASSERT(cached->state == CACHE_POPULATED);
-		memcpy(buffer, cached->data, bytes);
+		memcpy(buffer, cached->data + pos, sz);
 		cached->accessed_at = timer_ticks();
 	}
 
