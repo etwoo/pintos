@@ -34,8 +34,6 @@ struct inode_disk_indirect {
 	block_sector_t blocks[128];
 };
 
-typedef uint32_t ino_t; // TODO: move to header?
-
 struct inode_disk_index *TYPE_INDEX = NULL; /* Type system shenanigans. */
 struct inode_disk_indirect *TYPE_INDIRECT = NULL;
 static const off_t SPAN_INDIRECT =
@@ -179,16 +177,17 @@ inode_create(block_sector_t sector, off_t length)
    and returns a `struct inode' that contains it.
    Returns a null pointer if memory allocation fails. */
 struct inode *
-inode_open(block_sector_t sector)
+inode_open(ino_t ino)
 {
 	struct list_elem *e;
 	struct inode *inode;
 
+	// TODO: do we need a lock around open_inodes as part of sync revamp?
 	/* Check whether this inode is already open. */
 	for (e = list_begin(&open_inodes); e != list_end(&open_inodes);
 	     e = list_next(e)) {
 		inode = list_entry(e, struct inode, elem);
-		if (inode->sector == sector) {
+		if (inode->ino == ino) {
 			inode_reopen(inode);
 			return inode;
 		}
@@ -201,11 +200,10 @@ inode_open(block_sector_t sector)
 
 	/* Initialize. */
 	list_push_front(&open_inodes, &inode->elem);
-	inode->sector = sector;
+	inode->ino = ino;
 	inode->open_cnt = 1;
 	inode->deny_write_cnt = 0;
 	inode->removed = false;
-	block_read(fs_device, inode->sector, &inode->data); // TODO rm
 	return inode;
 }
 
@@ -219,10 +217,10 @@ inode_reopen(struct inode *inode)
 }
 
 /* Returns INODE's inode number. */
-block_sector_t
+ino_t
 inode_get_inumber(const struct inode *inode)
 {
-	return inode->sector;
+	return inode->ino;
 }
 
 /* Closes INODE and writes it to disk.
@@ -242,9 +240,10 @@ inode_close(struct inode *inode)
 
 		/* Deallocate blocks if removed. */
 		if (inode->removed) {
-			free_map_release(inode->sector, 1);
-			free_map_release(inode->data.start,
-			                 bytes_to_sectors(inode->data.length));
+			// TODO: free_map_release(), if free_map_allocate() was
+			// called lazily; check on-disk structures? free both
+			// slot in on-disk inofile and associated direct,
+			// indirect, indirect_2x blocks?
 		}
 
 		free(inode);
@@ -383,5 +382,12 @@ inode_allow_write(struct inode *inode)
 off_t
 inode_length(const struct inode *inode)
 {
-	return inode->data.length;
+	const block_sector_t sector = ino_to_inode_disk_sector(inode->ino);
+	const int pos = sizeof(*TYPE_INDEX); // TODO: reconsider hacks
+
+	off_t out = 0;
+	if (!cache_read(sector, pos, sizeof(out), &out)) {
+		return -1;
+	}
+	return out;
 }

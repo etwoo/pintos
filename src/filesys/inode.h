@@ -6,13 +6,14 @@
 
 #include <stdbool.h>
 
-struct bitmap;
+struct bitmap; // TODO: rm this dangling forward declaration
+typedef uint32_t ino_t;
 
 void inode_init(void);
 bool inode_create(block_sector_t, off_t);
-struct inode *inode_open(block_sector_t);
+struct inode *inode_open(ino_t);
 struct inode *inode_reopen(struct inode *);
-block_sector_t inode_get_inumber(const struct inode *);
+ino_t inode_get_inumber(const struct inode *);
 void inode_close(struct inode *);
 void inode_remove(struct inode *);
 off_t inode_read_at(struct inode *, void *, off_t size, off_t offset);
