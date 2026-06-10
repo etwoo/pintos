@@ -18,7 +18,7 @@ static void do_format(void);
 /* Initializes the file system module.
    If FORMAT is true, reformats the file system. */
 void
-filesys_init(bool format, int64_t writeback_period_ms)
+filesys_init(bool format)
 {
 	fs_device = block_get_role(BLOCK_FILESYS);
 	if (fs_device == NULL)
@@ -27,7 +27,7 @@ filesys_init(bool format, int64_t writeback_period_ms)
 
 	inode_init();
 	free_map_init();
-	cache_init(writeback_period_ms);
+	cache_init();
 
 	if (format)
 		do_format();

@@ -3,7 +3,7 @@
 
 #include "devices/block.h"
 
-void cache_init(int64_t writeback_period_ms);
+void cache_init(void);
 void cache_done(void);
 
 bool cache_read(block_sector_t sector, int pos, int sz, void *buffer);

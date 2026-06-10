@@ -70,8 +70,17 @@ cache_io_thread(void *aux UNUSED)
 	lock_release(&fs_cache.lock);
 }
 
+static void
+cache_writeback_thread(void *aux UNUSED)
+{
+	while (true) {
+		timer_msleep(5 * 1000); /* 5 seconds */
+		cache_done();
+	}
+}
+
 void
-cache_init(int64_t writeback_period_ms)
+cache_init()
 {
 	ASSERT(fs_device != NULL);
 
@@ -83,9 +92,8 @@ cache_init(int64_t writeback_period_ms)
 		cache_block_reset(fs_cache.blocks + i);
 	}
 
-	(void)writeback_period_ms; // TODO: spawn thread for periodic writeback
-	// combine with reader thread? IOPS serialized at IDE layer anyway
 	thread_create("cache-io", PRI_DEFAULT, cache_io_thread, NULL);
+	thread_create("writeback", PRI_DEFAULT, cache_writeback_thread, NULL);
 }
 
 static void
