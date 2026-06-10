@@ -88,19 +88,27 @@ cache_init(int64_t writeback_period_ms)
 	thread_create("cache-io", PRI_DEFAULT, cache_io_thread, NULL);
 }
 
+static void
+cache_flush_dirty(struct cache_block *b)
+{
+	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
+
+	ASSERT(b->sector != SECTOR_UNSET);
+	block_write(fs_device, b->sector, b->data);
+
+	ASSERT(b->state == CACHE_DIRTY);
+	b->state = CACHE_POPULATED;
+}
+
 void
 cache_done(void)
 {
-	return; // TODO rm, enable after debugging crashes
-
 	lock_acquire(&fs_cache.lock);
 
 	for (size_t i = 0; i < ARRAY_SIZE(fs_cache.blocks); ++i) {
 		struct cache_block *b = &fs_cache.blocks[i];
 		if (b->state == CACHE_DIRTY) {
-			ASSERT(b->sector != SECTOR_UNSET);
-			block_write(fs_device, b->sector, b->data);
-			b->state = CACHE_POPULATED;
+			cache_flush_dirty(b);
 		}
 	}
 
@@ -136,11 +144,10 @@ cache_find(block_sector_t sector)
 			switch (b->state) {
 			case CACHE_UNUSED:
 			case CACHE_POPULATED:
-				/* Can evict clean entry. */
+			case CACHE_DIRTY:
 				oldest = b;
 				break;
 			case CACHE_READ_QUEUED:
-			case CACHE_DIRTY:
 				/* Do not evict entry under active use. */
 				break;
 			}
@@ -148,6 +155,10 @@ cache_find(block_sector_t sector)
 	}
 
 	ASSERT(oldest != NULL);
+	if (oldest->state == CACHE_DIRTY) {
+		cache_flush_dirty(oldest);
+	}
+
 	cache_block_reset(oldest);
 	return oldest;
 }
