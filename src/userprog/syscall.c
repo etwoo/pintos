@@ -2,6 +2,7 @@
 
 #include "devices/input.h"
 #include "devices/shutdown.h"
+#include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
 #include "threads/interrupt.h"
@@ -9,7 +10,6 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "userprog/fd.h"
-#include "userprog/io.h"
 #include "userprog/pagedir.h"
 #include "userprog/process.h"
 #include "vm/page.h"
@@ -204,9 +204,7 @@ syscall_create(struct intr_frame *f, int *stack)
 	syscall_arg_peek(f, stack++, NULL, NULL, &filename);
 	const unsigned sz = syscall_arg_peek_word(f, stack++);
 
-	acquire_io_lock();
 	const bool created = filesys_create(filename, sz);
-	release_io_lock();
 
 	f->eax = created ? 1 : 0; /* create() returns bool, not integer code */
 	free(filename);
@@ -218,9 +216,7 @@ syscall_remove(struct intr_frame *f, int *stack)
 	char *filename = NULL;
 	syscall_arg_peek(f, stack++, NULL, NULL, &filename);
 
-	acquire_io_lock();
 	const bool removed = filesys_remove(filename);
-	release_io_lock();
 
 	f->eax = removed ? 1 : 0; /* remove() returns bool, not integer code */
 	free(filename);
@@ -232,14 +228,16 @@ syscall_open(struct intr_frame *f, int *stack)
 	char *filename = NULL;
 	syscall_arg_peek(f, stack++, NULL, NULL, &filename);
 
-	acquire_io_lock();
-	struct file *fh = filesys_open(filename);
-	release_io_lock();
+	struct file *file = NULL;
+	struct dir *dir = NULL;
 
-	if (fh == NULL) {
+	const bool ok = filesys_open_file_or_dir(filename, &file, &dir);
+
+	if (!ok || (file == NULL && dir == NULL)) {
 		f->eax = FD_INVALID;
 	} else {
-		f->eax = fd_register(fh);
+		ASSERT(file == NULL || dir == NULL); /* Mutually exclusive. */
+		f->eax = fd_register(file, dir);
 	}
 	free(filename);
 }
@@ -253,9 +251,7 @@ syscall_filesize(struct intr_frame *f, int *stack)
 	if (file == NULL) {
 		f->eax = FD_INVALID;
 	} else {
-		acquire_io_lock();
 		f->eax = file_length(file);
-		release_io_lock();
 	}
 }
 
@@ -304,7 +300,6 @@ syscall_io(int syscall_number, struct intr_frame *f, int *stack)
 		const size_t segment = MIN(to_next, sz - total_bytes);
 		off_t bytes = 0;
 
-		acquire_io_lock();
 		switch (syscall_number) {
 		case SYS_READ:
 			bytes = file_read(file, kaddr, segment);
@@ -316,7 +311,6 @@ syscall_io(int syscall_number, struct intr_frame *f, int *stack)
 			NOT_REACHED();
 			break;
 		}
-		release_io_lock();
 
 		if (bytes <= 0) {
 			if (bytes < 0) {
@@ -327,6 +321,12 @@ syscall_io(int syscall_number, struct intr_frame *f, int *stack)
 
 		total_bytes += bytes;
 	}
+
+	if (fd_to_dir(fd) != NULL) {
+		ASSERT(file == NULL);
+		total_bytes = -1;
+	}
+
 #ifdef VM
 	page_unpin(uaddr, sz);
 #endif
@@ -343,9 +343,7 @@ syscall_seek(struct intr_frame *f, int *stack)
 	if (file == NULL) {
 		f->eax = IO_FAIL;
 	} else {
-		acquire_io_lock();
 		file_seek(file, sz);
-		release_io_lock();
 		f->eax = IO_SUCCESS;
 	}
 }
@@ -359,9 +357,7 @@ syscall_tell(struct intr_frame *f, int *stack)
 	if (file == NULL) {
 		f->eax = IO_FAIL;
 	} else {
-		acquire_io_lock();
 		f->eax = file_tell(file);
-		release_io_lock();
 	}
 }
 
@@ -371,13 +367,14 @@ syscall_close(struct intr_frame *f, int *stack)
 	const int fd = syscall_arg_peek_word(f, stack++);
 
 	struct file *file = fd_to_file(fd);
-	if (file == NULL) {
+	struct dir *dir = fd_to_dir(fd);
+
+	if (file == NULL && dir == NULL) {
 		f->eax = IO_FAIL;
 	} else {
 		fd_unregister(fd);
-		acquire_io_lock();
-		file_close(file);
-		release_io_lock();
+		file_close(file); /* Handles NULL. */
+		dir_close(dir);   /* Handles NULL. */
 		f->eax = IO_SUCCESS;
 	}
 }
@@ -408,6 +405,91 @@ syscall_munmap(struct intr_frame *f, int *stack)
 	(void)stack; /* Unused. */
 	f->eax = ENOSYS;
 #endif
+}
+
+static void
+syscall_chdir(struct intr_frame *f, int *stack)
+{
+	char *path = NULL;
+	syscall_arg_peek(f, stack++, NULL, NULL, &path);
+
+	bool ok = false;
+	struct file *file_unexpected = NULL;
+	struct dir *dir_new = NULL;
+
+	if (dir_lookup(path, &file_unexpected, &dir_new) && dir_new != NULL) {
+		thread_reset_cwd(dir_new); /* Takes ownership. */
+		ok = true;
+	}
+
+	f->eax = ok ? 1 : 0; /* chdir() returns bool, not integer code */
+	file_close(file_unexpected);
+	free(path);
+}
+
+static void
+syscall_mkdir(struct intr_frame *f, int *stack)
+{
+	char *path = NULL;
+	syscall_arg_peek(f, stack++, NULL, NULL, &path);
+
+	const bool ok = dir_mkdir(path);
+
+	f->eax = ok ? 1 : 0; /* mkdir() returns bool, not integer code */
+	free(path);
+}
+
+static void
+syscall_readdir(struct intr_frame *f, int *stack)
+{
+	const int fd = syscall_arg_peek_word(f, stack++);
+	void *uaddr = (void *)syscall_arg_peek_word(f, stack++);
+
+	struct dir *dir = fd_to_dir(fd);
+	char bounce[NAME_MAX + 1] = {0};
+	const bool ok = dir != NULL && dir_readdir(dir, bounce);
+	if (ok) {
+		/* For now, we assume the destination buffer lies entirely
+		   within a single kpage. This may not be true in the general
+		   case, especially with virtual memory configured.
+
+		   Especially if we integrate the page cache and the buffer
+		   more tightly (Pintos Project 3 and Project 4), we would
+		   likely need to stop making this assumption.
+
+		   See syscall_arg_peek() and syscall_io() for examples of how
+		   to handle buffers (and C strings) that span two kpages. */
+		void *kaddr = check_span_is_user_vaddr(f, uaddr, NAME_MAX + 1);
+		memcpy(kaddr, bounce, sizeof(bounce));
+	}
+
+	f->eax = ok ? 1 : 0; /* readdir() returns bool, not integer code */
+}
+
+static void
+syscall_isdir(struct intr_frame *f, int *stack)
+{
+	const int fd = syscall_arg_peek_word(f, stack++);
+
+	const bool ok = (fd_to_dir(fd) != NULL);
+	f->eax = ok ? 1 : 0; /* isdir() returns bool, not integer code */
+}
+
+static void
+syscall_inumber(struct intr_frame *f, int *stack)
+{
+	const int fd = syscall_arg_peek_word(f, stack++);
+
+	struct file *file = fd_to_file(fd);
+	struct dir *dir = fd_to_dir(fd);
+
+	if (file != NULL) {
+		f->eax = file_get_inumber(file);
+	} else if (dir != NULL) {
+		f->eax = dir_get_inumber(dir);
+	} else {
+		f->eax = IO_FAIL;
+	}
 }
 
 static void
@@ -463,10 +545,20 @@ syscall_handler(struct intr_frame *f)
 		syscall_munmap(f, stack);
 		break;
 	case SYS_CHDIR:
+		syscall_chdir(f, stack);
+		break;
 	case SYS_MKDIR:
+		syscall_mkdir(f, stack);
+		break;
 	case SYS_READDIR:
+		syscall_readdir(f, stack);
+		break;
 	case SYS_ISDIR:
+		syscall_isdir(f, stack);
+		break;
 	case SYS_INUMBER:
+		syscall_inumber(f, stack);
+		break;
 	default:
 		f->eax = ENOSYS;
 		break;

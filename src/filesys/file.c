@@ -12,6 +12,9 @@ struct file {
 	bool deny_write;     /* Has file_deny_write() been called? */
 };
 
+/* Internal API for use only by dir_lookup_impl(). */
+struct file *file_open(struct inode *);
+
 /* Opens a file for the given INODE, of which it takes ownership,
    and returns the new file.  Returns a null pointer if an
    allocation fails or if INODE is null. */
@@ -51,10 +54,10 @@ file_close(struct file *file)
 }
 
 /* Returns the inode encapsulated by FILE. */
-struct inode *
-file_get_inode(struct file *file)
+ino_t
+file_get_inumber(struct file *file)
 {
-	return file->inode;
+	return inode_get_inumber(file->inode);
 }
 
 /* Reads SIZE bytes from FILE into BUFFER,
@@ -65,8 +68,11 @@ file_get_inode(struct file *file)
 off_t
 file_read(struct file *file, void *buffer, off_t size)
 {
-	off_t bytes_read = inode_read_at(file->inode, buffer, size, file->pos);
-	file->pos += bytes_read;
+	const off_t bytes_read =
+		inode_read_at(file->inode, buffer, size, file->pos);
+	if (bytes_read > 0) {
+		file->pos += bytes_read;
+	}
 	return bytes_read;
 }
 
@@ -91,9 +97,11 @@ file_read_at(struct file *file, void *buffer, off_t size, off_t file_ofs)
 off_t
 file_write(struct file *file, const void *buffer, off_t size)
 {
-	off_t bytes_written =
+	const off_t bytes_written =
 		inode_write_at(file->inode, buffer, size, file->pos);
-	file->pos += bytes_written;
+	if (bytes_written > 0) {
+		file->pos += bytes_written;
+	}
 	return bytes_written;
 }
 

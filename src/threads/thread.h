@@ -123,6 +123,9 @@ struct thread {
 		struct hash page_table;
 		int mmap_generator;
 	} vm;
+	struct {
+		struct dir *cwd;
+	} fs;
 
 	struct list_elem allelem; /* List element for all threads list. */
 
@@ -187,5 +190,8 @@ enum thread_page {
 	THREAD_PAGE_UNKNOWN, /* Inaccessible page_table, e.g. dying thread. */
 };
 enum thread_page thread_page_is_accessed_test_and_set(tid_t tid, void *upage);
+
+struct dir *thread_get_cwd(void);
+void thread_reset_cwd(struct dir *cwd); /* Takes ownership. */
 
 #endif /* threads/thread.h */

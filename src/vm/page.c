@@ -6,12 +6,13 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "userprog/fd.h"
-#include "userprog/io.h"
 #include "userprog/pagedir.h"
 #include "vm/frame.h"
 #include "vm/swap.h"
 
 #include <string.h>
+
+#define MIN(x, y) ((x) < (y) ? (x) : (y))
 
 static const int PAGE_DESCRIPTOR_ERROR = -1;
 static const int MMAP_ID_UNSET = -2;
@@ -101,10 +102,12 @@ page_evict_prepare(struct thread *t, struct hash_elem *e_, void **kpage_stolen)
 		ASSERT(entry->rw == PAGE_WRITABLE);
 		struct file *file = fd_to_file(entry->file.fd);
 		ASSERT(file != NULL);
-		acquire_io_lock();
-		off_t b = file_write_at(file, kpage, PGSIZE, entry->file.pos);
-		ASSERT(b == PGSIZE || b + entry->file.pos == file_length(file));
-		release_io_lock();
+		const off_t length = file_length(file);
+		ASSERT(length > entry->file.pos);
+		const off_t bytes_to_eof = length - entry->file.pos;
+		const off_t sz = MIN(bytes_to_eof, PGSIZE);
+		const off_t b = file_write_at(file, kpage, sz, entry->file.pos);
+		ASSERT(b == sz);
 	}
 
 	if (!complete_teardown && entry->type == PAGE_ANONYMOUS) {
@@ -301,9 +304,7 @@ fill_on_page_fault(void *kpage, void *aux)
 		file = fd_to_file(p->file.fd);
 		ASSERT(file != NULL);
 		ASSERT(intr_get_level() == INTR_ON);
-		acquire_io_lock();
 		bytes = file_read_at(file, kpage, PGSIZE, p->file.pos);
-		release_io_lock();
 		if (bytes < 0) {
 			/* No good way to handle I/O failure when caller
 			   depends on content to be faulted into memory. Stop
@@ -406,19 +407,17 @@ page_mmap(int fd, void *upage)
 	struct file *reopened = NULL;
 	off_t len = 0;
 
-	acquire_io_lock();
 	{
 		struct file *file = fd_to_file(fd);
 		reopened = (file == NULL) ? NULL : file_reopen(file);
 		len = (reopened == NULL) ? 0 : file_length(reopened);
 	}
-	release_io_lock();
 
 	if (reopened == NULL) {
 		return pd;
 	}
 
-	const int fd_new = fd_register(reopened);
+	const int fd_new = fd_register(reopened, NULL);
 	struct thread *t = thread_current();
 	pd.id = t->vm.mmap_generator++;
 
@@ -501,9 +500,7 @@ page_munmap(struct page_descriptor pd)
 	struct file *file = (got_fd == FD_INVALID) ? NULL : fd_to_file(got_fd);
 	if (file != NULL) {
 		fd_unregister(got_fd);
-		acquire_io_lock();
 		file_close(file);
-		release_io_lock();
 	}
 }
 

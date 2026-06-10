@@ -8,7 +8,6 @@
 #include "devices/timer.h"
 #include "devices/vga.h"
 #include "threads/interrupt.h"
-#include "threads/io.h"
 #include "threads/loader.h"
 #include "threads/malloc.h"
 #include "threads/palloc.h"
@@ -29,7 +28,6 @@
 #ifdef USERPROG
 #include "userprog/exception.h"
 #include "userprog/gdt.h"
-#include "userprog/io.h"
 #include "userprog/process.h"
 #include "userprog/syscall.h"
 #include "userprog/tss.h"
@@ -120,7 +118,6 @@ main(void)
 	input_init();
 #ifdef USERPROG
 	exception_init();
-	io_init();
 	syscall_init();
 #endif
 
