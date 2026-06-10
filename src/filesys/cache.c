@@ -18,11 +18,10 @@ struct cache_block {
 	} state;
 	block_sector_t sector;
 	int64_t accessed_at;
-	void *data[BLOCK_SECTOR_SIZE];
+	char data[BLOCK_SECTOR_SIZE];
 };
 
 struct cache_request {
-	block_sector_t sector;
 	struct cache_block *block;
 	struct condition request_done;
 	struct list_elem elem;
@@ -61,7 +60,7 @@ cache_io_thread(void *aux UNUSED)
 			list_entry(e, struct cache_request, elem);
 		ASSERT(r->block->state == CACHE_READ_QUEUED);
 
-		block_read(fs_device, r->sector, r->block->data);
+		block_read(fs_device, r->block->sector, r->block->data);
 		r->block->state = CACHE_POPULATED;
 
 		cond_signal(&r->request_done, &fs_cache.lock);
@@ -125,12 +124,13 @@ cache_read_async(block_sector_t sector, struct cache_block *to_fill)
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
 
 	struct cache_request r;
-	r.sector = sector;
-	r.block = to_fill;
 	cond_init(&r.request_done);
 
-	list_push_back(&fs_cache.requests, &r.elem);
+	r.block = to_fill;
 	r.block->state = CACHE_READ_QUEUED;
+	r.block->sector = sector;
+
+	list_push_back(&fs_cache.requests, &r.elem);
 
 	cond_signal(&fs_cache.requests_pending, &fs_cache.lock);
 
