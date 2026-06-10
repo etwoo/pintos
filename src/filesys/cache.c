@@ -15,6 +15,7 @@ struct cache_block {
 		CACHE_UNUSED,
 		CACHE_READ_QUEUED,
 		CACHE_POPULATED,
+		CACHE_DIRTY,
 	} state;
 	block_sector_t sector;
 	int64_t accessed_at;
@@ -90,7 +91,20 @@ cache_init(int64_t writeback_period_ms)
 void
 cache_done(void)
 {
-	// TODO: force synchronous writeback
+	return; // TODO rm, enable after debugging crashes
+
+	lock_acquire(&fs_cache.lock);
+
+	for (size_t i = 0; i < ARRAY_SIZE(fs_cache.blocks); ++i) {
+		struct cache_block *b = &fs_cache.blocks[i];
+		if (b->state == CACHE_DIRTY) {
+			ASSERT(b->sector != SECTOR_UNSET);
+			block_write(fs_device, b->sector, b->data);
+			b->state = CACHE_POPULATED;
+		}
+	}
+
+	lock_release(&fs_cache.lock);
 }
 
 static struct cache_block *
@@ -100,8 +114,17 @@ cache_find(block_sector_t sector)
 
 	for (size_t i = 0; i < ARRAY_SIZE(fs_cache.blocks); ++i) {
 		struct cache_block *b = &fs_cache.blocks[i];
-		if (b->state == CACHE_POPULATED && b->sector == sector) {
-			return b;
+		if (b->sector == sector) {
+			switch (b->state) {
+			case CACHE_UNUSED:
+			case CACHE_READ_QUEUED:
+				/* Sector matches, but data is not ready. */
+				break;
+			case CACHE_POPULATED:
+			case CACHE_DIRTY:
+				/* Cache hit. Return in-memory data. */
+				return b;
+			}
 		}
 	}
 
@@ -110,10 +133,21 @@ cache_find(block_sector_t sector)
 	for (size_t i = 0; i < ARRAY_SIZE(fs_cache.blocks); ++i) {
 		struct cache_block *b = &fs_cache.blocks[i];
 		if (oldest == NULL || b->accessed_at < oldest->accessed_at) {
-			oldest = b;
+			switch (b->state) {
+			case CACHE_UNUSED:
+			case CACHE_POPULATED:
+				/* Can evict clean entry. */
+				oldest = b;
+				break;
+			case CACHE_READ_QUEUED:
+			case CACHE_DIRTY:
+				/* Do not evict entry under active use. */
+				break;
+			}
 		}
 	}
 
+	ASSERT(oldest != NULL);
 	cache_block_reset(oldest);
 	return oldest;
 }
@@ -168,13 +202,13 @@ cache_read(block_sector_t sector, int pos, int sz, void *buffer)
 		cached = NULL;
 		break;
 	case CACHE_POPULATED:
+	case CACHE_DIRTY:
 		/* Cache hit. Copy value to caller. */
 		break;
 	}
 
 	if (cached != NULL) {
 		success = true;
-		ASSERT(cached->state == CACHE_POPULATED);
 		ASSERT(cached->sector == sector);
 		assert_sector_pos_sz_in_range(pos, sz);
 		memcpy(buffer, cached->data + pos, sz);
@@ -195,9 +229,13 @@ cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 	switch (cached->state) {
 	case CACHE_UNUSED:
 	case CACHE_POPULATED:
+	case CACHE_DIRTY:
 		break;
 	case CACHE_READ_QUEUED:
-		ASSERT(false); // TODO: deal with concurrent reads/writes
+		// TODO: wait behind existing queued read; if this means
+		// multiple threads can wait on the same request, change
+		// cond_signal() to cond_broadcast() in cache_read_async()
+		ASSERT(false);
 		cached = NULL;
 		break;
 	}
@@ -207,8 +245,7 @@ cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 		if (cached->state == CACHE_UNUSED && sz < BLOCK_SECTOR_SIZE) {
 			cache_read_async(sector, cached);
 		}
-		// TODO: mark cache entry dirty, for writeback
-		cached->state = CACHE_POPULATED;
+		cached->state = CACHE_DIRTY;
 		cached->sector = sector;
 		assert_sector_pos_sz_in_range(pos, sz);
 		memcpy(cached->data + pos, buffer, sz);
