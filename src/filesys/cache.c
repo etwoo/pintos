@@ -200,6 +200,7 @@ assert_sector_pos_sz_in_range(int pos, int sz)
 	ASSERT(pos + sz <= BLOCK_SECTOR_SIZE);
 }
 
+// TODO: async readhead on sector+1
 bool
 cache_read(block_sector_t sector, int pos, int sz, void *buffer)
 {
