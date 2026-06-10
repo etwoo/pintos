@@ -133,7 +133,7 @@ main(void)
 	/* Initialize file system. */
 	ide_init();
 	locate_block_devices();
-	filesys_init(format_filesys, 60 * 1000 /* 60s */);
+	filesys_init(format_filesys, 5 * 1000 /* 5s */);
 #endif
 #ifdef VM
 	swap_init();
