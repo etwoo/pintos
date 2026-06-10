@@ -27,11 +27,11 @@ filesys_init(bool format, int64_t writeback_period_ms)
 
 	inode_init();
 	free_map_init();
+	cache_init(writeback_period_ms);
 
 	if (format)
 		do_format();
 
-	cache_init(writeback_period_ms);
 	free_map_open();
 }
 

@@ -139,14 +139,18 @@ cache_read_async(block_sector_t sector, struct cache_block *to_fill)
 	}
 }
 
-bool
-cache_read(block_sector_t sector, int pos, int sz, void *buffer)
+static void
+assert_sector_pos_sz_in_range(int pos, int sz)
 {
 	ASSERT(0 <= pos && pos <= BLOCK_SECTOR_SIZE);
 	ASSERT(0 <= sz && sz <= BLOCK_SECTOR_SIZE);
 	ASSERT(pos + sz <= BLOCK_SECTOR_SIZE);
-	bool success = false;
+}
 
+bool
+cache_read(block_sector_t sector, int pos, int sz, void *buffer)
+{
+	bool success = false;
 	lock_acquire(&fs_cache.lock);
 
 	struct cache_block *cached = cache_find(sector);
@@ -171,6 +175,8 @@ cache_read(block_sector_t sector, int pos, int sz, void *buffer)
 	if (cached != NULL) {
 		success = true;
 		ASSERT(cached->state == CACHE_POPULATED);
+		ASSERT(cached->sector == sector);
+		assert_sector_pos_sz_in_range(pos, sz);
 		memcpy(buffer, cached->data + pos, sz);
 		cached->accessed_at = timer_ticks();
 	}
@@ -179,9 +185,36 @@ cache_read(block_sector_t sector, int pos, int sz, void *buffer)
 	return success;
 }
 
-void
-cache_write(block_sector_t sector, const void *buffer)
+bool
+cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 {
-	(void)sector; // TODO cache_write
-	(void)buffer; // TODO cache_write
+	bool success = false;
+	lock_acquire(&fs_cache.lock);
+
+	struct cache_block *cached = cache_find(sector);
+	switch (cached->state) {
+	case CACHE_UNUSED:
+	case CACHE_POPULATED:
+		break;
+	case CACHE_READ_QUEUED:
+		ASSERT(false); // TODO: deal with concurrent reads/writes
+		cached = NULL;
+		break;
+	}
+
+	if (cached != NULL) {
+		success = true;
+		if (cached->state == CACHE_UNUSED && sz < BLOCK_SECTOR_SIZE) {
+			cache_read_async(sector, cached);
+		}
+		// TODO: mark cache entry dirty, for writeback
+		cached->state = CACHE_POPULATED;
+		cached->sector = sector;
+		assert_sector_pos_sz_in_range(pos, sz);
+		memcpy(cached->data + pos, buffer, sz);
+		cached->accessed_at = timer_ticks();
+	}
+
+	lock_release(&fs_cache.lock);
+	return success;
 }
