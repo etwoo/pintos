@@ -31,8 +31,8 @@ filesys_init(bool format, int64_t writeback_period_ms)
 	if (format)
 		do_format();
 
-	free_map_open();
 	cache_init(writeback_period_ms);
+	free_map_open();
 }
 
 /* Shuts down the file system module, writing any unwritten data
@@ -40,8 +40,8 @@ filesys_init(bool format, int64_t writeback_period_ms)
 void
 filesys_done(void)
 {
-	cache_done();
 	free_map_close();
+	cache_done();
 }
 
 /* Creates a file named NAME with the given INITIAL_SIZE.

@@ -74,7 +74,11 @@ void
 cache_init(int64_t writeback_period_ms)
 {
 	ASSERT(fs_device != NULL);
+
 	lock_init(&fs_cache.lock);
+	list_init(&fs_cache.requests);
+	cond_init(&fs_cache.requests_pending);
+
 	for (size_t i = 0; i < ARRAY_SIZE(fs_cache.blocks); ++i) {
 		cache_block_reset(fs_cache.blocks + i);
 	}
