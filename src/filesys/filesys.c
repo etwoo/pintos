@@ -1,5 +1,6 @@
 #include "filesys/filesys.h"
 
+#include "filesys/cache.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/free-map.h"
@@ -17,7 +18,7 @@ static void do_format(void);
 /* Initializes the file system module.
    If FORMAT is true, reformats the file system. */
 void
-filesys_init(bool format)
+filesys_init(bool format, int64_t writeback_period_ms)
 {
 	fs_device = block_get_role(BLOCK_FILESYS);
 	if (fs_device == NULL)
@@ -31,6 +32,7 @@ filesys_init(bool format)
 		do_format();
 
 	free_map_open();
+	cache_init(writeback_period_ms);
 }
 
 /* Shuts down the file system module, writing any unwritten data
@@ -38,6 +40,7 @@ filesys_init(bool format)
 void
 filesys_done(void)
 {
+	cache_done();
 	free_map_close();
 }
 

@@ -1,5 +1,6 @@
 #include "filesys/inode.h"
 
+#include "filesys/cache.h"
 #include "filesys/filesys.h"
 #include "filesys/free-map.h"
 #include "threads/malloc.h"
@@ -37,6 +38,7 @@ struct inode {
 	bool removed;           /* True if deleted, false otherwise. */
 	int deny_write_cnt;     /* 0: writes ok, >0: deny writes. */
 	struct inode_disk data; /* Inode content. */
+	// TODO: rm struct inode_disk from struct inode (above)
 };
 
 /* Returns the block device sector that contains byte offset POS
@@ -134,7 +136,7 @@ inode_open(block_sector_t sector)
 	inode->open_cnt = 1;
 	inode->deny_write_cnt = 0;
 	inode->removed = false;
-	block_read(fs_device, inode->sector, &inode->data);
+	block_read(fs_device, inode->sector, &inode->data); // TODO rm
 	return inode;
 }
 
@@ -193,11 +195,9 @@ inode_remove(struct inode *inode)
    Returns the number of bytes actually read, which may be less
    than SIZE if an error occurs or end of file is reached. */
 off_t
-inode_read_at(struct inode *inode, void *buffer_, off_t size, off_t offset)
+inode_read_at(struct inode *inode, void *buffer, off_t size, off_t offset)
 {
-	uint8_t *buffer = buffer_;
 	off_t bytes_read = 0;
-	uint8_t *bounce = NULL;
 
 	while (size > 0) {
 		/* Disk sector to read, starting byte offset within sector. */
@@ -216,21 +216,9 @@ inode_read_at(struct inode *inode, void *buffer_, off_t size, off_t offset)
 		if (chunk_size <= 0)
 			break;
 
-		if (sector_ofs == 0 && chunk_size == BLOCK_SECTOR_SIZE) {
-			/* Read full sector directly into caller's buffer. */
-			block_read(fs_device, sector_idx, buffer + bytes_read);
-		} else {
-			/* Read sector into bounce buffer, then partially copy
-			   into caller's buffer. */
-			if (bounce == NULL) {
-				bounce = malloc(BLOCK_SECTOR_SIZE);
-				if (bounce == NULL)
-					break;
-			}
-			block_read(fs_device, sector_idx, bounce);
-			memcpy(buffer + bytes_read,
-			       bounce + sector_ofs,
-			       chunk_size);
+		/* Read sector (or chunk within sector) via buffer cache. */
+		if (!cache_read(sector_idx, buffer + bytes_read, chunk_size)) {
+			break;
 		}
 
 		/* Advance. */
@@ -238,7 +226,6 @@ inode_read_at(struct inode *inode, void *buffer_, off_t size, off_t offset)
 		offset += chunk_size;
 		bytes_read += chunk_size;
 	}
-	free(bounce);
 
 	return bytes_read;
 }
