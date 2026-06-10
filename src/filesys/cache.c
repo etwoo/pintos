@@ -43,7 +43,7 @@ cache_block_reset(struct cache_block *b)
 	b->state = CACHE_UNUSED;
 	b->sector = SECTOR_UNSET;
 	b->accessed_at = INT64_MIN;
-	// TODO: memset data[] to zero for debuggability?
+	memset(b->data, 0, sizeof(b->data));
 }
 
 static void
