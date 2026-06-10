@@ -13,7 +13,6 @@
 #include "threads/vaddr.h"
 #include "userprog/fd.h"
 #include "userprog/gdt.h"
-#include "userprog/io.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
 #include "vm/page.h"
@@ -209,17 +208,20 @@ void
 process_exit(int status)
 {
 	struct thread *cur = thread_current();
-	uint32_t *pd;
 
 	const bool early_error_in_load = (status == EXIT_NO_LOAD);
 	status = early_error_in_load ? EXIT_EXCEPTION : status;
+	if (!early_error_in_load) {
+		printf("%s: exit(%d)\n", cur->name, status);
+	}
+
 #ifdef VM
 	/* Flush dirty pages to disk, and clear address mappings. */
 	page_destroy();
 #endif
 	/* Destroy the current process's page directory and switch back
 	   to the kernel-only page directory. */
-	pd = cur->pagedir;
+	uint32_t *pd = cur->pagedir;
 	if (pd != NULL) {
 		/* Correct ordering here is crucial.  We must set
 		   cur->pagedir to NULL before switching page directories,
@@ -243,9 +245,7 @@ process_exit(int status)
 		free(fde);
 		fde = NULL;
 
-		acquire_io_lock();
 		file_close(file);
-		release_io_lock();
 	}
 
 	/* Register status code with our parent, who may wait() on us. */
@@ -260,10 +260,6 @@ process_exit(int status)
 		free(twc);
 	}
 	lock_release(&cur->wait.lock);
-
-	if (!early_error_in_load) {
-		printf("%s: exit(%d)\n", cur->name, status);
-	}
 }
 
 /* Sets up the CPU for running user code in the current
@@ -358,7 +354,7 @@ static bool load_segment(int fd,
    and its initial stack pointer into *ESP.
    Returns true if successful, false otherwise. */
 static bool
-load(const char *file_name, void (**eip)(void), void **esp, void **kpage)
+load(char *file_name, void (**eip)(void), void **esp, void **kpage)
 {
 	struct thread *t = thread_current();
 	struct Elf32_Ehdr ehdr;
@@ -373,8 +369,6 @@ load(const char *file_name, void (**eip)(void), void **esp, void **kpage)
 		goto done;
 	process_activate();
 
-	acquire_io_lock(); /* Synchronize filesys.h API usage. */
-
 	/* Open executable file. */
 	file = filesys_open(file_name);
 	if (file == NULL) {
@@ -382,7 +376,7 @@ load(const char *file_name, void (**eip)(void), void **esp, void **kpage)
 		goto done;
 	}
 
-	const int fd = fd_register(file);
+	const int fd = fd_register(file, NULL);
 
 	/* Read and verify executable header. */
 	if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr ||
@@ -471,8 +465,6 @@ load(const char *file_name, void (**eip)(void), void **esp, void **kpage)
 	file_deny_write(file);
 
 done:
-	/* We arrive here whether the load is successful or not. */
-	release_io_lock();
 	return success;
 }
 
@@ -550,7 +542,6 @@ load_segment(int fd,
 	ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
 	ASSERT(pg_ofs(upage) == 0);
 	ASSERT(ofs % PGSIZE == 0);
-	ASSERT(io_lock_held_by_current_thread());
 	const enum page_rw rw = writable ? PAGE_WRITABLE : PAGE_READONLY;
 
 	void *scratch = malloc(PGSIZE);

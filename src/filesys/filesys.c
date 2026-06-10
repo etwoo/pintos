@@ -1,5 +1,6 @@
 #include "filesys/filesys.h"
 
+#include "filesys/cache.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/free-map.h"
@@ -24,11 +25,14 @@ filesys_init(bool format)
 		PANIC("No file system device found, can't initialize file "
 		      "system.");
 
-	inode_init();
-	free_map_init();
+	cache_init();
+	free_map_init(inode_init());
 
-	if (format)
+	if (format) {
 		do_format();
+	} else if (!inode_check(ROOT_DIRECTORY_INO, INODE_FLAG_IS_DIR)) {
+		PANIC("File system lacks valid root directory.");
+	}
 
 	free_map_open();
 }
@@ -39,6 +43,7 @@ void
 filesys_done(void)
 {
 	free_map_close();
+	cache_done();
 }
 
 /* Creates a file named NAME with the given INITIAL_SIZE.
@@ -46,18 +51,9 @@ filesys_done(void)
    Fails if a file named NAME already exists,
    or if internal memory allocation fails. */
 bool
-filesys_create(const char *name, off_t initial_size)
+filesys_create(char *path, off_t sz)
 {
-	block_sector_t inode_sector = 0;
-	struct dir *dir = dir_open_root();
-	bool success = (dir != NULL && free_map_allocate(1, &inode_sector) &&
-	                inode_create(inode_sector, initial_size) &&
-	                dir_add(dir, name, inode_sector));
-	if (!success && inode_sector != 0)
-		free_map_release(inode_sector, 1);
-	dir_close(dir);
-
-	return success;
+	return dir_add(path, sz);
 }
 
 /* Opens the file with the given NAME.
@@ -66,16 +62,29 @@ filesys_create(const char *name, off_t initial_size)
    Fails if no file named NAME exists,
    or if an internal memory allocation fails. */
 struct file *
-filesys_open(const char *name)
+filesys_open(char *path)
 {
-	struct dir *dir = dir_open_root();
-	struct inode *inode = NULL;
+	struct file *file = NULL;
+	struct dir *dir = NULL;
+	if (!dir_lookup(path, &file, &dir)) {
+		return NULL;
+	}
 
-	if (dir != NULL)
-		dir_lookup(dir, name, &inode);
-	dir_close(dir);
+	if (dir != NULL) {
+		/* Caller expected a regular file at <path>, but a directory
+		   is present there instead. Clean up, and return an error. */
+		dir_close(dir);
+		dir = NULL;
+		ASSERT(file == NULL);
+	}
 
-	return file_open(inode);
+	return file;
+}
+
+bool
+filesys_open_file_or_dir(char *path, struct file **file, struct dir **dir)
+{
+	return dir_lookup(path, file, dir);
 }
 
 /* Deletes the file named NAME.
@@ -83,13 +92,9 @@ filesys_open(const char *name)
    Fails if no file named NAME exists,
    or if an internal memory allocation fails. */
 bool
-filesys_remove(const char *name)
+filesys_remove(char *path)
 {
-	struct dir *dir = dir_open_root();
-	bool success = dir != NULL && dir_remove(dir, name);
-	dir_close(dir);
-
-	return success;
+	return dir_remove(path);
 }
 
 /* Formats the file system. */
@@ -98,7 +103,7 @@ do_format(void)
 {
 	printf("Formatting file system...");
 	free_map_create();
-	if (!dir_create(ROOT_DIR_SECTOR, 16))
+	if (!dir_create_root())
 		PANIC("root directory creation failed");
 	free_map_close();
 	printf("done.\n");

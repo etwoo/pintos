@@ -35,7 +35,7 @@ fsutil_ls(char **argv UNUSED)
 void
 fsutil_cat(char **argv)
 {
-	const char *file_name = argv[1];
+	char *file_name = argv[1];
 
 	struct file *file;
 	char *buffer;
@@ -61,7 +61,7 @@ fsutil_cat(char **argv)
 void
 fsutil_rm(char **argv)
 {
-	const char *file_name = argv[1];
+	char *file_name = argv[1];
 
 	printf("Deleting '%s'...\n", file_name);
 	if (!filesys_remove(file_name))
@@ -93,18 +93,23 @@ fsutil_extract(char **argv UNUSED)
 	       "into file system...\n");
 
 	for (;;) {
-		const char *file_name;
+		char *file_name;
 		const char *error;
 		enum ustar_type type;
 		int size;
 
 		/* Read and parse ustar header. */
 		block_read(src, sector++, header);
-		error = ustar_parse_header(header, &file_name, &type, &size);
+
+		const char *as_const = NULL;
+		error = ustar_parse_header(header, &as_const, &type, &size);
 		if (error != NULL)
 			PANIC("bad ustar header in sector %" PRDSNu " (%s)",
 			      sector - 1,
 			      error);
+		/* Cast away const. Known safe because as_const refers to
+		   mutable memory backed by <header>. */
+		file_name = (char *)as_const;
 
 		if (type == USTAR_EOF) {
 			/* End of archive. */
@@ -170,7 +175,7 @@ fsutil_append(char **argv)
 {
 	static block_sector_t sector = 0;
 
-	const char *file_name = argv[1];
+	char *file_name = argv[1];
 	void *buffer;
 	struct file *src;
 	struct block *dst;
