@@ -9,17 +9,34 @@
 
 static struct file *free_map_file; /* Free map file. */
 static struct bitmap *free_map;    /* Free map, one bit per sector. */
+static block_sector_t free_map_sector = UINT32_MAX;
+static block_sector_t root_directory_sector = UINT32_MAX;
 
 /* Initializes the free map. */
 void
 free_map_init(void)
 {
-	free_map = bitmap_create(block_size(fs_device));
+	const block_size_t total_blocks = block_size(fs_device);
+	free_map = bitmap_create(total_blocks);
 	if (free_map == NULL)
 		PANIC("bitmap creation failed--file system device is too "
 		      "large");
-	bitmap_mark(free_map, FREE_MAP_SECTOR);
-	bitmap_mark(free_map, ROOT_DIR_SECTOR);
+
+	/* Allocate 4% of sectors to the inofile. With an 8MB disk,
+	 * the inofile supports 8*1024*1024/512/25 = 655 files. */
+	const block_sector_t inofile_sectors = total_blocks / 25;
+	bitmap_set_multiple(free_map, INOFILE_SECTOR, inofile_sectors, true);
+
+	free_map_sector = INOFILE_SECTOR + inofile_sectors;
+	const block_sector_t free_map_sector_count =
+		DIV_ROUND_UP(bitmap_file_size(free_map), BLOCK_SECTOR_SIZE);
+	bitmap_set_multiple(free_map,
+	                    free_map_sector,
+	                    free_map_sector_count,
+	                    true);
+
+	root_directory_sector = free_map_sector + free_map_sector_count;
+	bitmap_mark(free_map, root_directory_sector);
 }
 
 /* Allocates CNT consecutive sectors from the free map and stores
