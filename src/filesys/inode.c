@@ -137,7 +137,7 @@ byte_to_sector(const struct inode *inode, off_t pos)
    returns the same `struct inode'. */
 static struct list open_inodes;
 
-/* Initializes the inode module. Returns size of inofile in sectors. */
+/* Initializes the inode module. Returns next free sector after inofile. */
 block_sector_t
 inode_init(void)
 {
@@ -145,7 +145,7 @@ inode_init(void)
 
 	/* Allocate 4% of sectors to the inofile. With an 8MB disk,
 	 * the inofile supports 8*1024*1024/512/25 = 655 files. */
-	return block_size(fs_device) / 25;
+	return INOFILE_SECTOR + block_size(fs_device) / 25;
 }
 
 /* Initializes an inode with LENGTH bytes of data and

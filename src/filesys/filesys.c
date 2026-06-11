@@ -12,6 +12,8 @@
 
 /* Partition that contains the file system. */
 struct block *fs_device;
+/* Sector of root directory. TODO: maybe remove? */
+block_sector_t root_directory_sector = UINT32_MAX;
 
 static void do_format(void);
 
@@ -25,8 +27,8 @@ filesys_init(bool format)
 		PANIC("No file system device found, can't initialize file "
 		      "system.");
 
-	const block_sector_t inofile_sector_count = inode_init();
-	free_map_init(inofile_sector_count);
+	const block_sector_t free_map_sector = inode_init();
+	root_directory_sector = free_map_init(free_map_sector);
 	cache_init();
 
 	if (format)
@@ -101,7 +103,7 @@ do_format(void)
 {
 	printf("Formatting file system...");
 	free_map_create();
-	if (!dir_create(ROOT_DIR_SECTOR, 16))
+	if (!dir_create(root_directory_sector, 16))
 		PANIC("root directory creation failed");
 	free_map_close();
 	printf("done.\n");

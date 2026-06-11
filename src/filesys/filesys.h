@@ -1,6 +1,7 @@
 #ifndef FILESYS_FILESYS_H
 #define FILESYS_FILESYS_H
 
+#include "devices/block.h"
 #include "filesys/off_t.h"
 
 #include <stdbool.h>
@@ -10,6 +11,8 @@
 
 /* Block device that contains the file system. */
 extern struct block *fs_device;
+/* Sector of root directory. TODO: maybe remove? */
+extern block_sector_t root_directory_sector;
 
 void filesys_init(bool format);
 void filesys_done(void);

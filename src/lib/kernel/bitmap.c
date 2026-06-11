@@ -61,15 +61,6 @@ byte_cnt(size_t bit_cnt)
 	return sizeof(elem_type) * elem_cnt(bit_cnt);
 }
 
-/* Returns a bit mask in which the bits actually used in the last
-   element of B's bits are set to 1 and the rest are set to 0. */
-static inline elem_type
-last_mask(const struct bitmap *b)
-{
-	int last_bits = b->bit_cnt % ELEM_BITS;
-	return last_bits ? ((elem_type)1 << last_bits) - 1 : (elem_type)-1;
-}
-
 /* Creation and destruction. */
 
 /* Creates and returns a pointer to a newly allocated bitmap with room for
@@ -330,29 +321,6 @@ size_t
 bitmap_file_size(const struct bitmap *b)
 {
 	return byte_cnt(b->bit_cnt);
-}
-
-/* Reads B from FILE.  Returns true if successful, false
-   otherwise. */
-bool
-bitmap_read(struct bitmap *b, struct file *file)
-{
-	bool success = true;
-	if (b->bit_cnt > 0) {
-		off_t size = byte_cnt(b->bit_cnt);
-		success = file_read_at(file, b->bits, size, 0) == size;
-		b->bits[elem_cnt(b->bit_cnt) - 1] &= last_mask(b);
-	}
-	return success;
-}
-
-/* Writes B to FILE.  Return true if successful, false
-   otherwise. */
-bool
-bitmap_write(const struct bitmap *b, struct file *file)
-{
-	off_t size = byte_cnt(b->bit_cnt);
-	return file_write_at(file, b->bits, size, 0) == size;
 }
 #endif /* FILESYS */
 

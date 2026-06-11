@@ -41,8 +41,6 @@ size_t bitmap_scan_and_flip(struct bitmap *, size_t start, size_t cnt, bool);
 #ifdef FILESYS
 struct file;
 size_t bitmap_file_size(const struct bitmap *);
-bool bitmap_read(struct bitmap *, struct file *);
-bool bitmap_write(const struct bitmap *, struct file *);
 #endif
 
 /* Debugging. */
