@@ -12,7 +12,7 @@ static struct bitmap *free_map; /* Free map, one bit per sector. */
 static block_sector_t free_map_sector = UINT32_MAX;
 static block_sector_t free_map_sector_count = UINT32_MAX;
 
-/* Initializes the free map. Returns sector to use as root directory. */
+/* Initializes the free map. Returns next free sector after free map. */
 block_sector_t
 free_map_init(block_sector_t free_map_sector_)
 {
@@ -30,10 +30,7 @@ free_map_init(block_sector_t free_map_sector_)
 	                    free_map_sector_count,
 	                    true);
 
-	const block_sector_t root_directory_sector =
-		free_map_sector + free_map_sector_count;
-	bitmap_mark(free_map, root_directory_sector);
-	return root_directory_sector;
+	return free_map_sector + free_map_sector_count;
 }
 
 static bool

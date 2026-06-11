@@ -154,10 +154,12 @@ inode_init(void)
    Returns true if successful.
    Returns false if memory or disk allocation fails. */
 bool
-inode_create(block_sector_t sector, off_t length)
+inode_create(off_t length, ino_t *ino)
 {
 	struct inode_disk *disk_inode = NULL;
 	bool success = false;
+
+	*ino = 0; // TODO: pick free ino in inofile
 
 	ASSERT(length >= 0);
 
@@ -169,11 +171,11 @@ inode_create(block_sector_t sector, off_t length)
 	if (disk_inode != NULL) {
 		disk_inode->length = length;
 		disk_inode->magic = INODE_MAGIC;
-		// TODO: use cache_write on inofile, ino_to_inode_disk_sector()
-		block_write(fs_device, sector, disk_inode);
+		const int sz = BLOCK_SECTOR_SIZE;
+		const block_sector_t sector = ino_to_inode_disk_sector(*ino);
+		success = cache_write(sector, 0, sz, disk_inode);
 		free(disk_inode);
 		disk_inode = NULL;
-		success = true;
 	}
 	return success;
 }

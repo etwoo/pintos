@@ -9,7 +9,7 @@
 typedef uint32_t ino_t;
 
 block_sector_t inode_init(void);
-bool inode_create(block_sector_t, off_t);
+bool inode_create(off_t, ino_t *);
 struct inode *inode_open(ino_t);
 struct inode *inode_reopen(struct inode *);
 ino_t inode_get_inumber(const struct inode *);

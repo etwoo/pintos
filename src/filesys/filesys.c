@@ -27,8 +27,8 @@ filesys_init(bool format)
 		PANIC("No file system device found, can't initialize file "
 		      "system.");
 
-	root_directory_sector = free_map_init(inode_init());
 	cache_init();
+	root_directory_sector = free_map_init(inode_init());
 
 	if (format)
 		do_format();
@@ -50,17 +50,12 @@ filesys_done(void)
    Fails if a file named NAME already exists,
    or if internal memory allocation fails. */
 bool
-filesys_create(const char *name, off_t initial_size)
+filesys_create(const char *s, off_t sz)
 {
-	block_sector_t inode_sector = 0;
-	struct dir *dir = dir_open_root();
-	bool success = (dir != NULL && free_map_allocate(1, &inode_sector) &&
-	                inode_create(inode_sector, initial_size) &&
-	                dir_add(dir, name, inode_sector));
-	if (!success && inode_sector != 0)
-		free_map_release(inode_sector, 1);
-	dir_close(dir);
-
+	ino_t i = 0;
+	struct dir *d = dir_open_root();
+	bool success = (d != NULL && inode_create(sz, &i) && dir_add(d, s, i));
+	dir_close(d);
 	return success;
 }
 
@@ -102,7 +97,7 @@ do_format(void)
 {
 	printf("Formatting file system...");
 	free_map_create();
-	if (!dir_create(root_directory_sector, 16))
+	if (!dir_create(16))
 		PANIC("root directory creation failed");
 	free_map_close();
 	printf("done.\n");
