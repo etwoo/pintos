@@ -84,17 +84,38 @@ struct inode {
    Returns BLOCK_SECTOR_INVALID if INODE does not contain data for a byte at
    offset POS. */
 static block_sector_t
-byte_to_sector(const struct inode *inode, off_t pos)
+byte_to_sector(const struct inode *inode, off_t pos, bool allocate)
 {
 	ASSERT(inode != NULL);
 
 	if (pos < MAX_DIRECT) {
-		const size_t n = pos / BLOCK_SECTOR_SIZE;
-		ASSERT(n < ARRAY_SIZE(TYPE_INDEX->direct));
-		return ino_to_inode_disk_member(inode->ino, n);
+		const size_t slot = pos / BLOCK_SECTOR_SIZE;
+		ASSERT(slot < ARRAY_SIZE(TYPE_INDEX->direct));
+		block_sector_t out = ino_to_inode_disk_member(inode->ino, slot);
+		if (allocate &&              /* Lazy allocation allowed. */
+		    out == INOFILE_SECTOR && /* Lazy allocation required. */
+		    free_map_allocate(1, &out) &&
+		    !cache_write(ino_to_inode_disk_sector(inode->ino),
+		                 slot * sizeof(out),
+		                 sizeof(out),
+		                 &out)) {
+			free_map_release(out, 1);
+			out = BLOCK_SECTOR_INVALID;
+		}
+		return out;
 	} else if (pos < MAX_INDIRECT) {
-		const block_sector_t indirect =
+		block_sector_t indirect =
 			ino_to_inode_disk_member(inode->ino, 12);
+		if (allocate && /* Lazy allocation allowed. */
+		    indirect == INOFILE_SECTOR &&
+		    free_map_allocate(1, &indirect) &&
+		    !cache_write(ino_to_inode_disk_sector(inode->ino),
+		                 12 * sizeof(indirect),
+		                 sizeof(indirect),
+		                 &indirect)) {
+			free_map_release(indirect, 1);
+			indirect = BLOCK_SECTOR_INVALID;
+		}
 		if (indirect == BLOCK_SECTOR_INVALID) {
 			return BLOCK_SECTOR_INVALID;
 		}
@@ -106,9 +127,18 @@ byte_to_sector(const struct inode *inode, off_t pos)
 		if (!cache_read(indirect, slot * sz, sz, &out)) {
 			return BLOCK_SECTOR_INVALID;
 		}
+		if (allocate && /* Lazy allocation allowed. */
+		    out == INOFILE_SECTOR &&
+		    free_map_allocate(1, &out) &&
+		    !cache_write(indirect, slot * sz, sz, &out)) {
+			free_map_release(out, 1);
+			out = BLOCK_SECTOR_INVALID;
+		}
+
 		return out;
 	}
 
+	// TODO: lazy allocation for double indirect
 	// TODO: consolidate byte_to_sector() copy-pasta above and below
 	ASSERT(pos < MAX_INDIRECT_2x);
 	const block_sector_t indirect_2x =
@@ -280,7 +310,8 @@ inode_read_at(struct inode *inode, void *buffer, off_t size, off_t offset)
 
 	while (size > 0) {
 		/* Disk sector to read, starting byte offset within sector. */
-		block_sector_t sector_idx = byte_to_sector(inode, offset);
+		block_sector_t sector_idx =
+			byte_to_sector(inode, offset, false);
 		if (sector_idx == INOFILE_SECTOR || // TODO cleanup
 		    sector_idx == BLOCK_SECTOR_INVALID) {
 			break;
@@ -334,28 +365,10 @@ inode_write_at(struct inode *inode,
 
 	while (size > 0) {
 		/* Sector to write, starting byte offset within sector. */
-		block_sector_t sector_idx = byte_to_sector(inode, offset);
+		block_sector_t sector_idx = byte_to_sector(inode, offset, true);
 		if (sector_idx == INOFILE_SECTOR || // TODO cleanup
 		    sector_idx == BLOCK_SECTOR_INVALID) {
-			ASSERT(offset < MAX_DIRECT); // TODO: indirect
-			block_sector_t alloc = 0;
-			if (!free_map_allocate(1, &alloc)) {
-				break;
-			}
-			const size_t slot = offset / BLOCK_SECTOR_SIZE;
-			ASSERT(slot < ARRAY_SIZE(TYPE_INDEX->direct));
-			if (!cache_write(ino_to_inode_disk_sector(inode->ino),
-			                 slot * sizeof(alloc),
-			                 sizeof(alloc),
-			                 &alloc)) {
-				break;
-			}
-			ASSERT(byte_to_sector(inode, offset) == alloc);
-			sector_idx = alloc;
-			if (sector_idx == INOFILE_SECTOR || // TODO cleanup
-			    sector_idx == BLOCK_SECTOR_INVALID) {
-				break;
-			}
+			break;
 		}
 
 		int sector_ofs = offset % BLOCK_SECTOR_SIZE;
