@@ -337,6 +337,8 @@ inode_write_at(struct inode *inode,
 		block_sector_t sector_idx = byte_to_sector(inode, offset);
 		if (sector_idx == INOFILE_SECTOR || // TODO cleanup
 		    sector_idx == BLOCK_SECTOR_INVALID) {
+			// TODO: allocate block lazily, update ino in inofile
+			// lack of above is why filesys_create() -> crashloop!
 			break;
 		}
 
