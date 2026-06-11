@@ -107,6 +107,7 @@ byte_to_sector(const struct inode *inode, off_t pos)
 		return out;
 	}
 
+	// TODO: consolidate byte_to_sector() copy-pasta above and below
 	ASSERT(pos < MAX_INDIRECT_2x);
 	const block_sector_t indirect_2x =
 		ino_to_inode_disk_member(inode->ino, 13);
