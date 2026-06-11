@@ -161,7 +161,8 @@ inode_create(off_t length, ino_t *ino)
 	struct inode_disk *disk_inode = NULL;
 	bool success = false;
 
-	*ino = ROOT_DIRECTORY_INO; // TODO: pick free ino in inofile
+	static ino_t inode_allocator = ROOT_DIRECTORY_INO;
+	*ino = inode_allocator++; // TODO: pick free ino in inofile
 
 	ASSERT(length >= 0);
 
@@ -171,6 +172,7 @@ inode_create(off_t length, ino_t *ino)
 
 	disk_inode = calloc(1, sizeof *disk_inode);
 	if (disk_inode != NULL) {
+		// TODO: mark slot/sector as used in inofile?
 		disk_inode->length = length;
 		disk_inode->magic = INODE_MAGIC;
 		const int sz = BLOCK_SECTOR_SIZE;
