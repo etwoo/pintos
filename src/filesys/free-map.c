@@ -26,8 +26,8 @@ free_map_init(block_sector_t free_map_sector_)
 	free_map_sector_count =
 		DIV_ROUND_UP(bitmap_file_size(free_map), BLOCK_SECTOR_SIZE);
 	bitmap_set_multiple(free_map,
-	                    free_map_sector,
-	                    free_map_sector_count,
+	                    INOFILE_SECTOR,
+	                    free_map_sector + free_map_sector_count,
 	                    true);
 }
 

@@ -337,9 +337,25 @@ inode_write_at(struct inode *inode,
 		block_sector_t sector_idx = byte_to_sector(inode, offset);
 		if (sector_idx == INOFILE_SECTOR || // TODO cleanup
 		    sector_idx == BLOCK_SECTOR_INVALID) {
-			// TODO: allocate block lazily, update ino in inofile
-			// lack of above is why filesys_create() -> crashloop!
-			break;
+			ASSERT(offset < MAX_DIRECT); // TODO: indirect
+			block_sector_t alloc = 0;
+			if (!free_map_allocate(1, &alloc)) {
+				break;
+			}
+			const size_t slot = offset / BLOCK_SECTOR_SIZE;
+			ASSERT(slot < ARRAY_SIZE(TYPE_INDEX->direct));
+			if (!cache_write(ino_to_inode_disk_sector(inode->ino),
+			                 slot * sizeof(alloc),
+			                 sizeof(alloc),
+			                 &alloc)) {
+				break;
+			}
+			ASSERT(byte_to_sector(inode, offset) == alloc);
+			sector_idx = alloc;
+			if (sector_idx == INOFILE_SECTOR || // TODO cleanup
+			    sector_idx == BLOCK_SECTOR_INVALID) {
+				break;
+			}
 		}
 
 		int sector_ofs = offset % BLOCK_SECTOR_SIZE;
