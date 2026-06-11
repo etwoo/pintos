@@ -6,10 +6,9 @@
 
 #include <stdbool.h>
 
-struct bitmap; // TODO: rm this dangling forward declaration
 typedef uint32_t ino_t;
 
-void inode_init(void);
+block_sector_t inode_init(void);
 bool inode_create(block_sector_t, off_t);
 struct inode *inode_open(ino_t);
 struct inode *inode_reopen(struct inode *);

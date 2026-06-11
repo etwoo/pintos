@@ -25,8 +25,8 @@ filesys_init(bool format)
 		PANIC("No file system device found, can't initialize file "
 		      "system.");
 
-	inode_init();
-	free_map_init();
+	const block_sector_t inofile_sector_count = inode_init();
+	free_map_init(inofile_sector_count);
 	cache_init();
 
 	if (format)
