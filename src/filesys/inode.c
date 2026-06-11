@@ -161,7 +161,7 @@ inode_create(off_t length, ino_t *ino)
 	struct inode_disk *disk_inode = NULL;
 	bool success = false;
 
-	*ino = 0; // TODO: pick free ino in inofile
+	*ino = ROOT_DIRECTORY_INO; // TODO: pick free ino in inofile
 
 	ASSERT(length >= 0);
 
@@ -279,7 +279,8 @@ inode_read_at(struct inode *inode, void *buffer, off_t size, off_t offset)
 	while (size > 0) {
 		/* Disk sector to read, starting byte offset within sector. */
 		block_sector_t sector_idx = byte_to_sector(inode, offset);
-		if (sector_idx == BLOCK_SECTOR_INVALID) {
+		if (sector_idx == INOFILE_SECTOR || // TODO cleanup
+		    sector_idx == BLOCK_SECTOR_INVALID) {
 			break;
 		}
 		int sector_ofs = offset % BLOCK_SECTOR_SIZE;
@@ -332,7 +333,8 @@ inode_write_at(struct inode *inode,
 	while (size > 0) {
 		/* Sector to write, starting byte offset within sector. */
 		block_sector_t sector_idx = byte_to_sector(inode, offset);
-		if (sector_idx == BLOCK_SECTOR_INVALID) {
+		if (sector_idx == INOFILE_SECTOR || // TODO cleanup
+		    sector_idx == BLOCK_SECTOR_INVALID) {
 			break;
 		}
 
