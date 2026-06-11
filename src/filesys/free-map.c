@@ -96,7 +96,6 @@ void
 free_map_close(void)
 {
 	free_map_write();
-	bitmap_destroy(free_map);
 }
 
 /* Creates a new free map file on disk and writes the free map to
