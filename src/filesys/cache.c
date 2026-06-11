@@ -175,6 +175,7 @@ static void
 cache_read_async(block_sector_t sector, struct cache_block *to_fill)
 {
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
+	ASSERT(sector < block_size(fs_device));
 
 	struct cache_request r;
 	cond_init(&r.request_done);
