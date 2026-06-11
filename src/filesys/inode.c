@@ -11,6 +11,8 @@
 #include <round.h>
 #include <string.h>
 
+const ino_t ROOT_DIRECTORY_INO = 0;
+
 /* Identifies an inode. */
 #define INODE_MAGIC 0x494e4f44
 

@@ -8,6 +8,8 @@
 
 typedef uint32_t ino_t;
 
+extern const ino_t ROOT_DIRECTORY_INO;
+
 block_sector_t inode_init(void);
 bool inode_create(off_t, ino_t *);
 struct inode *inode_open(ino_t);

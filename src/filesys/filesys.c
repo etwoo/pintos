@@ -12,8 +12,6 @@
 
 /* Partition that contains the file system. */
 struct block *fs_device;
-/* Sector of root directory. TODO: maybe remove? */
-block_sector_t root_directory_sector = UINT32_MAX;
 
 static void do_format(void);
 
@@ -28,7 +26,7 @@ filesys_init(bool format)
 		      "system.");
 
 	cache_init();
-	root_directory_sector = free_map_init(inode_init());
+	free_map_init(inode_init());
 
 	if (format)
 		do_format();

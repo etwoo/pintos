@@ -6,7 +6,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-block_sector_t free_map_init(block_sector_t inofile_sector_count);
+void free_map_init(block_sector_t inofile_sector_count);
 void free_map_read(void);
 void free_map_create(void);
 void free_map_open(void);

@@ -12,8 +12,8 @@ static struct bitmap *free_map; /* Free map, one bit per sector. */
 static block_sector_t free_map_sector = UINT32_MAX;
 static block_sector_t free_map_sector_count = UINT32_MAX;
 
-/* Initializes the free map. Returns next free sector after free map. */
-block_sector_t
+/* Initializes the free map. */
+void
 free_map_init(block_sector_t free_map_sector_)
 {
 	free_map_sector = free_map_sector_;
@@ -29,8 +29,6 @@ free_map_init(block_sector_t free_map_sector_)
 	                    free_map_sector,
 	                    free_map_sector_count,
 	                    true);
-
-	return free_map_sector + free_map_sector_count;
 }
 
 static bool
