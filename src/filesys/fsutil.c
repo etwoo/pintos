@@ -61,7 +61,7 @@ fsutil_cat(char **argv)
 void
 fsutil_rm(char **argv)
 {
-	const char *file_name = argv[1];
+	char *file_name = argv[1];
 
 	printf("Deleting '%s'...\n", file_name);
 	if (!filesys_remove(file_name))

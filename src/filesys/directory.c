@@ -391,8 +391,8 @@ dir_mkdir(char *path)
 /* Removes any entry for NAME in DIR.
    Returns true if successful, false on failure,
    which occurs only if there is no file with the given NAME. */
-bool
-dir_remove(struct dir *dir, const char *name)
+static bool
+dir_remove_leaf(struct dir *dir, const char *name)
 {
 	struct dir_entry e;
 	struct inode *inode = NULL;
@@ -423,6 +423,18 @@ dir_remove(struct dir *dir, const char *name)
 done:
 	inode_close(inode);
 	return success;
+}
+
+static bool
+dir_remove_leaf_glue(struct dir *parent, struct path_part *leaf, void *aux UNUSED)
+{
+	return dir_remove_leaf(parent, leaf->name);
+}
+
+bool
+dir_remove(char *path)
+{
+	return dir_leaf_action(path, dir_remove_leaf_glue, NULL);
 }
 
 /* Reads the next directory entry in DIR and stores the name in

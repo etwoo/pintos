@@ -73,13 +73,9 @@ filesys_open(char *path)
    Fails if no file named NAME exists,
    or if an internal memory allocation fails. */
 bool
-filesys_remove(const char *name)
+filesys_remove(char *path)
 {
-	struct dir *dir = dir_open_root(); // TODO: use thread.fs.cwd
-	bool success = dir != NULL && dir_remove(dir, name);
-	dir_close(dir);
-
-	return success;
+	return dir_remove(path);
 }
 
 /* Formats the file system. */

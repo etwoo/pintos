@@ -27,7 +27,7 @@ struct inode *dir_get_inode(struct dir *);
 bool dir_lookup(char *path, struct inode **inode);
 bool dir_add(char *path, off_t length);
 bool dir_mkdir(char *path);
-bool dir_remove(struct dir *, const char *name);
+bool dir_remove(char *path);
 bool dir_readdir(struct dir *, char name[NAME_MAX + 1]);
 
 #endif /* filesys/directory.h */
