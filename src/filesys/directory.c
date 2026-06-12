@@ -194,6 +194,11 @@ dir_lookup_impl(bool absolute,
 	struct inode *cur = NULL;
 	struct dir *dir = absolute ? dir_open_root() : dir_start;
 
+	if (absolute && list_empty(path_parts)) {
+		/* Accept empty path_parts for absolute paths. */
+		cur = inode_open(ROOT_DIRECTORY_INO);
+	}
+
 	struct list_elem *e = list_begin(path_parts);
 	for (; e != list_end(path_parts); e = list_next(e)) {
 		struct path_part *part = list_entry(e, struct path_part, elem);
