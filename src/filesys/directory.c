@@ -10,6 +10,8 @@
 
 static const char PATH_SEP_STR[] = "/";
 static const char PATH_SEP_CHAR = '/';
+static const char PATH_DOT[] = ".";
+static const char PATH_DOT_DOT[] = "..";
 
 /* A directory. */
 struct dir {
@@ -20,8 +22,8 @@ struct dir {
 /* A single directory entry. */
 struct dir_entry {
 	ino_t ino;
-	char name[NAME_MAX + 1];     /* Null terminated file name. */
-	bool in_use;                 /* In use or free? */
+	char name[NAME_MAX + 1]; /* Null terminated file name. */
+	bool in_use;             /* In use or free? */
 };
 
 /* Creates a directory with space for ENTRY_CNT entries in the
@@ -139,6 +141,13 @@ struct path_part {
 	struct list_elem elem;
 };
 
+static void
+path_part_list_elem_free(struct list_elem *e)
+{
+	struct path_part *part = list_entry(e, struct path_part, elem);
+	free(part);
+}
+
 static bool
 path_part_list_init(char *path, struct list *list)
 {
@@ -146,6 +155,15 @@ path_part_list_init(char *path, struct list *list)
 	for (char *token = strtok_r(path, PATH_SEP_STR, &save_ptr);
 	     token != NULL;
 	     token = strtok_r(NULL, PATH_SEP_STR, &save_ptr)) {
+		if (0 == strcmp(token, PATH_DOT)) {
+			continue;
+		}
+
+		/* Simplify ".." where possible, like: a/../b/c -> b/c. */
+		if (0 == strcmp(token, PATH_DOT_DOT) && !list_empty(list)) {
+			path_part_list_elem_free(list_pop_back(list));
+		}
+
 		struct path_part *p = malloc(sizeof(*p));
 		if (p == NULL) {
 			return false;
@@ -160,9 +178,7 @@ static void
 path_part_list_free(struct list *list)
 {
 	while (!list_empty(list)) {
-		struct list_elem *e = list_pop_front(list);
-		struct path_part *part = list_entry(e, struct path_part, elem);
-		free(part);
+		path_part_list_elem_free(list_pop_front(list));
 	}
 }
 
@@ -184,7 +200,7 @@ dir_lookup_r(struct dir *dir_start, char *path, struct inode **inode)
 	struct list_elem *e = list_begin(&path_parts);
 	for (; e != list_end(&path_parts); e = list_next(e)) {
 		struct path_part *part = list_entry(e, struct path_part, elem);
-		// TODO: handle . and ..
+		// TODO: handle ".." reaching outside of dir_start
 
 		if (cur != NULL) {
 			if (dir != dir_start) {
