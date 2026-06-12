@@ -209,7 +209,6 @@ void
 process_exit(int status)
 {
 	struct thread *cur = thread_current();
-	uint32_t *pd;
 
 	const bool early_error_in_load = (status == EXIT_NO_LOAD);
 	status = early_error_in_load ? EXIT_EXCEPTION : status;
@@ -223,7 +222,7 @@ process_exit(int status)
 #endif
 	/* Destroy the current process's page directory and switch back
 	   to the kernel-only page directory. */
-	pd = cur->pagedir;
+	uint32_t *pd = cur->pagedir;
 	if (pd != NULL) {
 		/* Correct ordering here is crucial.  We must set
 		   cur->pagedir to NULL before switching page directories,
