@@ -28,5 +28,6 @@ block_sector_t byte_to_sector(const struct inode *inode, off_t pos, bool alloc);
 
 bool inode_disk_create(off_t length, ino_t *out);
 off_t inode_disk_to_length(ino_t ino);
+bool inode_disk_set_length(ino_t ino, off_t length);
 
 #endif

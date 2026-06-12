@@ -220,6 +220,9 @@ inode_write_at(struct inode *inode,
 		bytes_written += chunk_size;
 	}
 
+	if (offset + bytes_written > inode_length(inode)) {
+		inode_disk_set_length(inode->ino, offset + bytes_written);
+	}
 	return bytes_written;
 }
 

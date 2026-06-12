@@ -192,3 +192,11 @@ inode_disk_to_length(ino_t ino)
 	}
 	return out;
 }
+
+bool
+inode_disk_set_length(ino_t ino, off_t length)
+{
+	const block_sector_t sector = ino_to_inode_disk_sector(ino);
+	const int pos = sizeof(*TYPE_INDEX); // TODO: reconsider hacks
+	return cache_write(sector, pos, sizeof(length), &length);
+}
