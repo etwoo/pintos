@@ -36,8 +36,8 @@ struct inode_disk_indirect {
 	block_sector_t blocks[128];
 };
 
-struct inode_disk_index *TYPE_INDEX = NULL; /* Type system shenanigans. */
-struct inode_disk_indirect *TYPE_INDIRECT = NULL;
+struct inode_disk_index *TYPE_INDEX = NULL;       /* Type system shenanigans. */
+struct inode_disk_indirect *TYPE_INDIRECT = NULL; /* Type system shenanigans. */
 static const off_t SPAN_INDIRECT =
 	BLOCK_SECTOR_SIZE * ARRAY_SIZE(TYPE_INDIRECT->blocks);
 static const off_t MAX_DIRECT =
