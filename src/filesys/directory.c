@@ -122,8 +122,8 @@ lookup(const struct dir *dir,
    and returns true if one exists, false otherwise.
    On success, sets *INODE to an inode for the file, otherwise to
    a null pointer.  The caller must close *INODE. */
-bool
-dir_lookup(const struct dir *dir, const char *name, struct inode **inode)
+static bool
+dir_lookup_leaf(const struct dir *dir, const char *name, struct inode **inode)
 {
 	struct dir_entry e;
 
@@ -220,7 +220,7 @@ dir_lookup_impl(bool absolute,
 		ASSERT(cur == NULL);
 		ASSERT(dir != NULL);
 
-		if (!dir_lookup(dir, part->name, &cur)) {
+		if (!dir_lookup_leaf(dir, part->name, &cur)) {
 			goto done;
 		}
 	}
@@ -249,7 +249,7 @@ get_cwd(void)
 }
 
 bool
-dir_lookup_r(char *path, struct inode **inode)
+dir_lookup(char *path, struct inode **inode)
 {
 	const bool absolute = (path != NULL && path[0] == PATH_SEP_CHAR);
 

@@ -62,16 +62,13 @@ filesys_create(const char *s, off_t sz)
    Fails if no file named NAME exists,
    or if an internal memory allocation fails. */
 struct file *
-filesys_open(const char *name)
+filesys_open(char *name)
 {
-	struct dir *dir = dir_open_root(); // TODO: use thread.fs.cwd
 	struct inode *inode = NULL;
-
-	if (dir != NULL)
-		dir_lookup(dir, name, &inode);
-	dir_close(dir);
-
-	return file_open(inode);
+	if (!dir_lookup(name, &inode)) {
+		return NULL;
+	}
+	return file_open(inode); /* Takes ownership. */
 }
 
 /* Deletes the file named NAME.

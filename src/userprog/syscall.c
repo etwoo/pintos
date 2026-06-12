@@ -408,7 +408,7 @@ syscall_chdir(struct intr_frame *f, int *stack)
 	bool ok = false;
 
 	struct inode *i = NULL;
-	if (dir_lookup_r(path, &i)) {
+	if (dir_lookup(path, &i)) {
 		struct dir *new_dir = dir_open(i); /* Takes ownership. */
 		if (new_dir != NULL) {
 			dir_close(thread_current()->fs.cwd);

@@ -361,7 +361,7 @@ static bool load_segment(int fd,
    and its initial stack pointer into *ESP.
    Returns true if successful, false otherwise. */
 static bool
-load(const char *file_name, void (**eip)(void), void **esp, void **kpage)
+load(char *file_name, void (**eip)(void), void **esp, void **kpage)
 {
 	struct thread *t = thread_current();
 	struct Elf32_Ehdr ehdr;
