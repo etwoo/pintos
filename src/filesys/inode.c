@@ -27,7 +27,7 @@ struct inode_disk_index {
 struct inode_disk {
 	struct inode_disk_index idx;
 	off_t length;         // TODO: change to uint32_t
-	uint32_t refcnt;      /* Number of hardlinks to this inode. */
+	uint32_t refcnt;      /* Number of hardlinks to this inode. */ // TODO
 	uint32_t magic;       /* Magic number. */
 	uint32_t unused[111]; /* Not used. */
 };
