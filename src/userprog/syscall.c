@@ -392,6 +392,25 @@ syscall_munmap(struct intr_frame *f, int *stack)
 #endif
 }
 
+
+static void
+syscall_inumber(struct intr_frame *f, int *stack)
+{
+#ifdef FILESYS
+	const int fd = *stack++;
+
+	struct file *file = fd_to_file(fd);
+	if (file == NULL) {
+		f->eax = IO_FAIL;
+	} else {
+		f->eax = file_ino(file);
+	}
+#else
+	(void)stack; /* Unused. */
+	f->eax = ENOSYS;
+#endif
+}
+
 static void
 syscall_handler(struct intr_frame *f)
 {
@@ -443,10 +462,17 @@ syscall_handler(struct intr_frame *f)
 		syscall_munmap(f, kaddr);
 		break;
 	case SYS_CHDIR:
+		// TODO
+		break;
 	case SYS_MKDIR:
+		break;
 	case SYS_READDIR:
+		break;
 	case SYS_ISDIR:
+		break;
 	case SYS_INUMBER:
+		syscall_inumber(f, kaddr);
+		break;
 	default:
 		f->eax = ENOSYS;
 		break;
