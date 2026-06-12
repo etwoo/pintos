@@ -43,7 +43,9 @@ cache_read_or_alloc(block_sector_t sector, int pos, bool alloc)
 	if (alloc && out == INODE_SECTOR_UNSET && free_map_allocate(1, &out)) {
 		void *zeroes = calloc(1, BLOCK_SECTOR_SIZE);
 		if (zeroes == NULL ||
+		    /* Update containing block to refer to allocated sector. */
 		    !cache_write(sector, pos, sizeof(out), &out) ||
+		    /* Initialize allocated sector to all zeroes. */
 		    !cache_write(out, 0, BLOCK_SECTOR_SIZE, zeroes)) {
 			free_map_release(out, 1);
 			out = INODE_SECTOR_UNSET;
