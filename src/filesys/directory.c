@@ -150,6 +150,7 @@ path_part_list_init(char *path, struct list *list)
 		if (p == NULL) {
 			return false;
 		}
+		p->name = token;
 		list_push_back(list, &p->elem);
 	}
 	return true;
