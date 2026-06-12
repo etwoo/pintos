@@ -422,7 +422,6 @@ syscall_chdir(struct intr_frame *f, int *stack)
 	(void)stack; /* Unused. */
 	f->eax = ENOSYS;
 #endif
-
 }
 
 static void
