@@ -400,15 +400,21 @@ syscall_chdir(struct intr_frame *f, int *stack)
 	char *path = NULL;
 	syscall_arg_peek(f, stack++, NULL, NULL, &path);
 
-	struct dir *root = dir_open_root(); // TODO: relative to cwd instead
+	bool ok = false;
+
+	struct dir *old_dir = thread_current()->fs.cwd;
+	ASSERT(old_dir != NULL);
+
 	struct inode *i = NULL;
-	const bool lookup_ok = dir_lookup_r(root, path, &i);
-
-	thread_current()->fs.cwd = dir_open(i); /* Takes ownership of inode. */
-	const bool diropen_ok = (thread_current()->fs.cwd != NULL);
-
-	dir_close(root);
-	const bool ok = lookup_ok && diropen_ok;
+	if (dir_lookup_r(old_dir, path, &i)) {
+		struct dir *new_dir = dir_open(i); /* Takes ownership. */
+		if (new_dir != NULL) {
+			dir_close(old_dir);
+			old_dir = NULL;
+			thread_current()->fs.cwd = new_dir;
+			ok = true;
+		}
+	}
 
 	f->eax = ok ? 1 : 0; /* chdir() returns bool, not integer code */
 	free(path);

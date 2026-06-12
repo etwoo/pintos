@@ -1,6 +1,7 @@
 #include "threads/thread.h"
 
 #include "devices/timer.h" /* for TIMER_FREQ */
+#include "filesys/directory.h"
 #include "threads/flags.h"
 #include "threads/interrupt.h"
 #include "threads/intr-stubs.h"
@@ -569,7 +570,7 @@ init_thread(struct thread *t, const char *name, int priority)
 	lock_init(&t->vm.lock);
 	t->vm.initialized = false;
 	t->vm.mmap_generator = 1; /* first valid mapping ID */
-	t->fs.cwd = NULL;
+	t->fs.cwd = dir_open_root();
 	t->magic = THREAD_MAGIC;
 
 	old_level = intr_disable();
