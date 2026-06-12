@@ -46,7 +46,7 @@ static const off_t MAX_INDIRECT = MAX_DIRECT + SPAN_INDIRECT;
 static const off_t MAX_INDIRECT_2x =
 	MAX_INDIRECT + SPAN_INDIRECT * ARRAY_SIZE(TYPE_INDIRECT->blocks);
 
-static const block_sector_t BLOCK_SECTOR_INVALID = UINT32_MAX;
+static const block_sector_t SECTOR_UNSET = 0;
 
 static block_sector_t
 ino_to_inode_disk_sector(ino_t ino)
@@ -56,18 +56,65 @@ ino_to_inode_disk_sector(ino_t ino)
 }
 
 static block_sector_t
-ino_to_inode_disk_member(ino_t ino, size_t n)
+cache_read_or_alloc(block_sector_t sector, int pos, bool alloc)
+{
+	block_sector_t out = SECTOR_UNSET;
+	if (!cache_read(sector, pos, sizeof(out), &out)) {
+		ASSERT(out == SECTOR_UNSET);
+	}
+	if (alloc && out == SECTOR_UNSET) {
+		if (free_map_allocate(1, &out) &&
+		    !cache_write(sector, pos, sizeof(out), &out)) {
+			free_map_release(out, 1);
+			out = SECTOR_UNSET;
+		}
+	}
+	return out;
+}
+
+static block_sector_t
+get_inode_disk_member(ino_t ino, size_t slot, bool alloc)
 {
 	const block_sector_t sector = ino_to_inode_disk_sector(ino);
 
-	block_sector_t out = 0;
-	ASSERT(n < sizeof(struct inode_disk_index) / sizeof(out));
-	const int pos = n * sizeof(out);
+	ASSERT(slot < sizeof(struct inode_disk_index) / sizeof(block_sector_t));
+	const int pos = slot * sizeof(block_sector_t);
 
-	if (!cache_read(sector, pos, sizeof(out), &out)) {
-		return BLOCK_SECTOR_INVALID;
+	return cache_read_or_alloc(sector, pos, alloc);
+}
+
+static block_sector_t
+get_indirect_block_slot(block_sector_t indirect, off_t filepos, bool alloc)
+{
+	off_t relpos = 0;
+	if (MAX_DIRECT <= filepos && filepos < MAX_INDIRECT) {
+		relpos = filepos - MAX_DIRECT;
+	} else if (MAX_INDIRECT <= filepos && filepos <= MAX_INDIRECT_2x) {
+		relpos = filepos % SPAN_INDIRECT;
+	} else {
+		ASSERT(false && "Out-of-range arg to get_indirect_block_slot");
 	}
-	return out;
+
+	const size_t slot = relpos / BLOCK_SECTOR_SIZE;
+	ASSERT(slot < ARRAY_SIZE(TYPE_INDIRECT->blocks));
+
+	const int pos = slot * sizeof(TYPE_INDIRECT->blocks[0]);
+	return cache_read_or_alloc(indirect, pos, alloc);
+}
+
+static block_sector_t
+get_indirect_2x_block_slot(block_sector_t indirect_2x,
+                           off_t filepos,
+                           bool alloc)
+{
+	ASSERT(MAX_INDIRECT <= filepos && filepos < MAX_INDIRECT_2x);
+	const off_t relpos = filepos - MAX_INDIRECT;
+
+	const size_t slot = relpos / SPAN_INDIRECT;
+	ASSERT(slot < ARRAY_SIZE(TYPE_INDIRECT->blocks));
+
+	const int pos = slot * sizeof(TYPE_INDIRECT->blocks[0]);
+	return cache_read_or_alloc(indirect_2x, pos, alloc);
 }
 
 /* In-memory inode. */
@@ -79,113 +126,66 @@ struct inode {
 	int deny_write_cnt; /* 0: writes ok, >0: deny writes. */
 };
 
+static block_sector_t
+byte_to_sector_direct(const struct inode *inode, off_t pos, bool alloc)
+{
+	ASSERT(pos < MAX_DIRECT);
+
+	const size_t slot = pos / BLOCK_SECTOR_SIZE;
+	ASSERT(slot < ARRAY_SIZE(TYPE_INDEX->direct));
+	return get_inode_disk_member(inode->ino, slot, alloc);
+}
+
+static block_sector_t
+byte_to_sector_indirect(const struct inode *inode, off_t pos, bool alloc)
+{
+	ASSERT(MAX_DIRECT <= pos && pos < MAX_INDIRECT);
+
+	const block_sector_t indirect =
+		get_inode_disk_member(inode->ino, 12, alloc);
+	if (indirect == SECTOR_UNSET) {
+		return SECTOR_UNSET;
+	}
+
+	return get_indirect_block_slot(indirect, pos, alloc);
+}
+
+static block_sector_t
+byte_to_sector_indirect_2x(const struct inode *inode, off_t pos, bool alloc)
+{
+	const block_sector_t indirect_2x =
+		get_inode_disk_member(inode->ino, 13, alloc);
+	if (indirect_2x == SECTOR_UNSET) {
+		return SECTOR_UNSET;
+	}
+
+	const block_sector_t indirect_1x =
+		get_indirect_2x_block_slot(indirect_2x, pos, alloc);
+	if (indirect_1x == SECTOR_UNSET) {
+		return SECTOR_UNSET;
+	}
+
+	return get_indirect_block_slot(indirect_1x, pos, alloc);
+}
+
 /* Returns the block device sector that contains byte offset POS
    within INODE.
-   Returns BLOCK_SECTOR_INVALID if INODE does not contain data for a byte at
-   offset POS. */
+   Returns SECTOR_UNSET if INODE does not contain data for a byte at offset POS.
+ */
 static block_sector_t
-byte_to_sector(const struct inode *inode, off_t pos, bool allocate)
+byte_to_sector(const struct inode *inode, off_t pos, bool alloc)
 {
 	ASSERT(inode != NULL);
 
+	block_sector_t out = SECTOR_UNSET;
 	if (pos < MAX_DIRECT) {
-		const size_t slot = pos / BLOCK_SECTOR_SIZE;
-		ASSERT(slot < ARRAY_SIZE(TYPE_INDEX->direct));
-		block_sector_t out = ino_to_inode_disk_member(inode->ino, slot);
-		if (allocate &&              /* Lazy allocation allowed. */
-		    out == INOFILE_SECTOR && /* Lazy allocation required. */
-		    free_map_allocate(1, &out) &&
-		    !cache_write(ino_to_inode_disk_sector(inode->ino),
-		                 slot * sizeof(out),
-		                 sizeof(out),
-		                 &out)) {
-			free_map_release(out, 1);
-			out = BLOCK_SECTOR_INVALID;
-		}
-		return out;
+		out = byte_to_sector_direct(inode, pos, alloc);
 	} else if (pos < MAX_INDIRECT) {
-		block_sector_t indirect =
-			ino_to_inode_disk_member(inode->ino, 12);
-		if (allocate && /* Lazy allocation allowed. */
-		    indirect == INOFILE_SECTOR &&
-		    free_map_allocate(1, &indirect) &&
-		    !cache_write(ino_to_inode_disk_sector(inode->ino),
-		                 12 * sizeof(indirect),
-		                 sizeof(indirect),
-		                 &indirect)) {
-			free_map_release(indirect, 1);
-			indirect = BLOCK_SECTOR_INVALID;
-		}
-		if (indirect == BLOCK_SECTOR_INVALID) {
-			return BLOCK_SECTOR_INVALID;
-		}
-		const off_t relpos = pos - MAX_DIRECT;
-		const size_t slot = relpos / BLOCK_SECTOR_SIZE;
-		ASSERT(slot < ARRAY_SIZE(TYPE_INDIRECT->blocks));
-		block_sector_t out = 0;
-		const size_t sz = sizeof(out);
-		if (!cache_read(indirect, slot * sz, sz, &out)) {
-			return BLOCK_SECTOR_INVALID;
-		}
-		if (allocate && /* Lazy allocation allowed. */
-		    out == INOFILE_SECTOR && free_map_allocate(1, &out) &&
-		    !cache_write(indirect, slot * sz, sz, &out)) {
-			free_map_release(out, 1);
-			out = BLOCK_SECTOR_INVALID;
-		}
-
-		return out;
+		out = byte_to_sector_indirect(inode, pos, alloc);
+	} else {
+		out = byte_to_sector_indirect_2x(inode, pos, alloc);
 	}
 
-	// TODO: consolidate byte_to_sector() copy-pasta above and below
-	ASSERT(pos < MAX_INDIRECT_2x);
-	block_sector_t indirect_2x =
-		ino_to_inode_disk_member(inode->ino, 13);
-	if (allocate && /* Lazy allocation allowed. */
-	    indirect_2x == INOFILE_SECTOR &&
-	    free_map_allocate(1, &indirect_2x) &&
-	    !cache_write(ino_to_inode_disk_sector(inode->ino),
-	                 13 * sizeof(indirect_2x),
-	                 sizeof(indirect_2x),
-	                 &indirect_2x)) {
-		free_map_release(indirect_2x, 1);
-		indirect_2x = BLOCK_SECTOR_INVALID;
-	}
-	if (indirect_2x == BLOCK_SECTOR_INVALID) {
-		return BLOCK_SECTOR_INVALID;
-	}
-	const off_t relpos_indirect = pos - MAX_INDIRECT;
-	const size_t slot_indirect = relpos_indirect / SPAN_INDIRECT;
-	ASSERT(slot_indirect < ARRAY_SIZE(TYPE_INDIRECT->blocks));
-	block_sector_t indirect_1x = 0;
-	const size_t sz = sizeof(indirect_1x);
-	if (!cache_read(indirect_2x, slot_indirect * sz, sz, &indirect_1x)) {
-		return BLOCK_SECTOR_INVALID;
-	}
-	if (allocate && /* Lazy allocation allowed. */
-	    indirect_1x == INOFILE_SECTOR &&
-	    free_map_allocate(1, &indirect_1x) &&
-	    !cache_write(indirect_2x, slot_indirect * sz, sz, &indirect_1x)) {
-		free_map_release(indirect_1x, 1);
-		indirect_1x = BLOCK_SECTOR_INVALID;
-	}
-	if (indirect_1x == BLOCK_SECTOR_INVALID) {
-		return BLOCK_SECTOR_INVALID;
-	}
-	const off_t relpos_direct = (relpos_indirect % SPAN_INDIRECT);
-	const size_t slot_direct = relpos_direct / BLOCK_SECTOR_SIZE;
-	ASSERT(slot_direct < ARRAY_SIZE(TYPE_INDIRECT->blocks));
-	block_sector_t out = 0;
-	ASSERT(sizeof(out) == sz);
-	if (!cache_read(indirect_1x, slot_direct * sz, sz, &out)) {
-		return BLOCK_SECTOR_INVALID;
-	}
-	if (allocate && /* Lazy allocation allowed. */
-	    out == INOFILE_SECTOR && free_map_allocate(1, &out) &&
-	    !cache_write(indirect_1x, slot_direct * sz, sz, &out)) {
-		free_map_release(out, 1);
-		out = BLOCK_SECTOR_INVALID;
-	}
 	return out;
 }
 
@@ -336,8 +336,7 @@ inode_read_at(struct inode *inode, void *buffer, off_t size, off_t offset)
 		/* Disk sector to read, starting byte offset within sector. */
 		block_sector_t sector_idx =
 			byte_to_sector(inode, offset, false);
-		if (sector_idx == INOFILE_SECTOR || // TODO cleanup
-		    sector_idx == BLOCK_SECTOR_INVALID) {
+		if (sector_idx == SECTOR_UNSET) {
 			break;
 		}
 		int sector_ofs = offset % BLOCK_SECTOR_SIZE;
@@ -390,8 +389,7 @@ inode_write_at(struct inode *inode,
 	while (size > 0) {
 		/* Sector to write, starting byte offset within sector. */
 		block_sector_t sector_idx = byte_to_sector(inode, offset, true);
-		if (sector_idx == INOFILE_SECTOR || // TODO cleanup
-		    sector_idx == BLOCK_SECTOR_INVALID) {
+		if (sector_idx == SECTOR_UNSET) {
 			break;
 		}
 
