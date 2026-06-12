@@ -268,6 +268,9 @@ dir_mkdir(struct dir *dir_start, char *path)
 			goto done;
 		}
 		parent = dir_open(parent_inode); /* Takes ownership. */
+		if (parent == NULL) {
+			goto done;
+		}
 	}
 
 	struct path_part *leaf = list_entry(leaf_elem, struct path_part, elem);
