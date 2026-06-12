@@ -50,7 +50,7 @@ filesys_done(void)
 bool
 filesys_create(const char *s, off_t sz)
 {
-	struct dir *d = dir_open_root();
+	struct dir *d = dir_open_root(); // TODO: use thread.fs.cwd
 	const bool success = (d != NULL && dir_add(d, s, sz, 0));
 	dir_close(d);
 	return success;
@@ -64,7 +64,7 @@ filesys_create(const char *s, off_t sz)
 struct file *
 filesys_open(const char *name)
 {
-	struct dir *dir = dir_open_root();
+	struct dir *dir = dir_open_root(); // TODO: use thread.fs.cwd
 	struct inode *inode = NULL;
 
 	if (dir != NULL)
@@ -81,7 +81,7 @@ filesys_open(const char *name)
 bool
 filesys_remove(const char *name)
 {
-	struct dir *dir = dir_open_root();
+	struct dir *dir = dir_open_root(); // TODO: use thread.fs.cwd
 	bool success = dir != NULL && dir_remove(dir, name);
 	dir_close(dir);
 

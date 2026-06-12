@@ -570,7 +570,7 @@ init_thread(struct thread *t, const char *name, int priority)
 	lock_init(&t->vm.lock);
 	t->vm.initialized = false;
 	t->vm.mmap_generator = 1; /* first valid mapping ID */
-	t->fs.cwd = dir_open_root();
+	t->fs.cwd = NULL;
 	t->magic = THREAD_MAGIC;
 
 	old_level = intr_disable();
