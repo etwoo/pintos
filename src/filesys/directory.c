@@ -260,58 +260,14 @@ dir_lookup(char *path, struct inode **inode)
 	       dir_lookup_impl(absolute, get_cwd(), &path_parts, inode);
 }
 
-bool
-dir_mkdir(char *path)
-{
-	const bool absolute = (path != NULL && path[0] == PATH_SEP_CHAR);
-	bool success = false;
-	struct list_elem *leaf_elem = NULL;
-	struct dir *parent = NULL;
-
-	struct list path_parts;
-	list_init(&path_parts);
-	if (!path_part_list_init(path, &path_parts)) {
-		goto done;
-	}
-
-	leaf_elem = list_pop_back(&path_parts);
-	{
-		struct inode *parent_inode = NULL;
-		if (!dir_lookup_impl(absolute,
-		                     get_cwd(),
-		                     &path_parts,
-		                     &parent_inode)) {
-			goto done;
-		}
-		parent = dir_open(parent_inode); /* Takes ownership. */
-		if (parent == NULL) {
-			goto done;
-		}
-	}
-
-	struct path_part *leaf = list_entry(leaf_elem, struct path_part, elem);
-	if (!dir_add(parent, leaf->name, 0, INODE_FLAG_IS_DIRECTORY)) {
-		goto done;
-	}
-
-	success = true;
-
-done:
-	dir_close(parent);
-	if (leaf_elem != NULL) {
-		path_part_list_elem_free(leaf_elem);
-	}
-	return success;
-}
-
 /* Adds a file named NAME to DIR, which must not already contain a
    file by that name.  The file's inode is in sector
    INODE_SECTOR.
    Returns true if successful, false on failure.
    Fails if NAME is invalid (i.e. too long) or a disk or memory
    error occurs. */
-bool
-dir_add(struct dir *dir, const char *name, off_t length, uint32_t flags)
+static bool
+dir_add_leaf(struct dir *dir, const char *name, off_t length, uint32_t flags)
 {
 	struct dir_entry e;
 	off_t ofs;
@@ -358,6 +314,78 @@ dir_add(struct dir *dir, const char *name, off_t length, uint32_t flags)
 
 done:
 	return success;
+}
+
+static bool
+dir_leaf_action(char *path,
+                bool on_leaf(struct dir *, struct path_part *, void *),
+                void *aux)
+{
+	const bool absolute = (path != NULL && path[0] == PATH_SEP_CHAR);
+	bool success = false;
+	struct list_elem *leaf_elem = NULL;
+	struct dir *parent = NULL;
+
+	struct list path_parts;
+	list_init(&path_parts);
+	if (!path_part_list_init(path, &path_parts)) {
+		goto done;
+	}
+
+	leaf_elem = list_pop_back(&path_parts);
+	{
+		struct inode *parent_inode = NULL;
+		if (!dir_lookup_impl(absolute,
+		                     get_cwd(),
+		                     &path_parts,
+		                     &parent_inode)) {
+			goto done;
+		}
+		parent = dir_open(parent_inode); /* Takes ownership. */
+		if (parent == NULL) {
+			goto done;
+		}
+	}
+
+	struct path_part *leaf = list_entry(leaf_elem, struct path_part, elem);
+	if (!on_leaf(parent, leaf, aux)) {
+		goto done;
+	}
+
+	success = true;
+
+done:
+	dir_close(parent);
+	if (leaf_elem != NULL) {
+		path_part_list_elem_free(leaf_elem);
+	}
+	return success;
+
+}
+
+static bool
+dir_touch_leaf(struct dir *parent, struct path_part *leaf, void *aux)
+{
+	const off_t *length = aux;
+	return dir_add_leaf(parent, leaf->name, *length, 0);
+}
+
+bool
+dir_add(char *path, off_t length)
+{
+	return dir_leaf_action(path, dir_touch_leaf, &length);
+}
+
+static bool
+dir_mkdir_leaf(struct dir *parent, struct path_part *leaf, void *aux UNUSED)
+{
+	return dir_add_leaf(parent, leaf->name, 0, INODE_FLAG_IS_DIRECTORY);
+}
+
+bool
+dir_mkdir(char *path)
+{
+	return dir_leaf_action(path, dir_mkdir_leaf, NULL);
 }
 
 /* Removes any entry for NAME in DIR.

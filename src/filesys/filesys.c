@@ -48,12 +48,9 @@ filesys_done(void)
    Fails if a file named NAME already exists,
    or if internal memory allocation fails. */
 bool
-filesys_create(const char *s, off_t sz)
+filesys_create(char *path, off_t sz)
 {
-	struct dir *d = dir_open_root(); // TODO: use thread.fs.cwd
-	const bool success = (d != NULL && dir_add(d, s, sz, 0));
-	dir_close(d);
-	return success;
+	return dir_add(path, sz);
 }
 
 /* Opens the file with the given NAME.
@@ -62,10 +59,10 @@ filesys_create(const char *s, off_t sz)
    Fails if no file named NAME exists,
    or if an internal memory allocation fails. */
 struct file *
-filesys_open(char *name)
+filesys_open(char *path)
 {
 	struct inode *inode = NULL;
-	if (!dir_lookup(name, &inode)) {
+	if (!dir_lookup(path, &inode)) {
 		return NULL;
 	}
 	return file_open(inode); /* Takes ownership. */
