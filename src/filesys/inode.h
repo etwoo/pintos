@@ -9,9 +9,10 @@
 typedef uint32_t ino_t;
 
 extern const ino_t ROOT_DIRECTORY_INO;
+extern const uint32_t INODE_FLAG_IS_DIRECTORY;
 
 block_sector_t inode_init(void);
-bool inode_create(off_t, ino_t *);
+bool inode_create(off_t, uint32_t, ino_t *);
 struct inode *inode_open(ino_t);
 struct inode *inode_reopen(struct inode *);
 ino_t inode_get_inumber(const struct inode *);

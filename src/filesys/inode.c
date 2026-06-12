@@ -9,6 +9,7 @@
 #include <string.h>
 
 const ino_t ROOT_DIRECTORY_INO = 0;
+const uint32_t INODE_FLAG_IS_DIRECTORY = 0x1;
 
 /* List of open inodes, so that opening a single inode twice
    returns the same `struct inode'. */
@@ -31,9 +32,9 @@ inode_init(void)
    Returns true if successful.
    Returns false if memory or disk allocation fails. */
 bool
-inode_create(off_t length, ino_t *ino)
+inode_create(off_t length, uint32_t flags, ino_t *ino)
 {
-	return inode_disk_create(length, ino);
+	return inode_disk_create(length, flags, ino);
 }
 
 /* Reads an inode from SECTOR

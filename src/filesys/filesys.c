@@ -51,7 +51,7 @@ bool
 filesys_create(const char *s, off_t sz)
 {
 	struct dir *d = dir_open_root();
-	const bool success = (d != NULL && dir_add(d, s));
+	const bool success = (d != NULL && dir_add(d, s, sz, 0));
 	dir_close(d);
 	return success;
 }
@@ -94,7 +94,7 @@ do_format(void)
 {
 	printf("Formatting file system...");
 	free_map_create();
-	if (!dir_create(16))
+	if (!dir_create())
 		PANIC("root directory creation failed");
 	free_map_close();
 	printf("done.\n");

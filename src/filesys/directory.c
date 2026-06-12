@@ -26,13 +26,15 @@ struct dir_entry {
 	bool in_use;             /* In use or free? */
 };
 
+static const off_t DIRECTORY_SIZE_INIT = 16 * sizeof(struct dir_entry);
+
 /* Creates a directory with space for ENTRY_CNT entries in the
    given SECTOR.  Returns true if successful, false on failure. */
 bool
-dir_create(size_t entry_cnt)
+dir_create(void)
 {
 	ino_t ino = 0;
-	return inode_create(entry_cnt * sizeof(struct dir_entry), &ino);
+	return inode_create(DIRECTORY_SIZE_INIT, INODE_FLAG_IS_DIRECTORY, &ino);
 }
 
 /* Opens and returns the directory for the given INODE, of which
@@ -102,7 +104,7 @@ lookup(const struct dir *dir,
 
 	ASSERT(dir != NULL);
 	ASSERT(name != NULL);
-	// TODO: verify inode corresponds to directory (not reg file)
+	// TODO: verify dir->inode corresponds to directory (not reg file)
 
 	for (ofs = 0; inode_read_at(dir->inode, &e, sizeof e, ofs) == sizeof e;
 	     ofs += sizeof e)
@@ -270,7 +272,7 @@ dir_mkdir(struct dir *dir_start, char *path)
 	}
 
 	struct path_part *leaf = list_entry(leaf_elem, struct path_part, elem);
-	if (!dir_add(parent, leaf->name)) { // TODO: pass flag to create subdir
+	if (!dir_add(parent, leaf->name, 0, INODE_FLAG_IS_DIRECTORY)) {
 		goto done;
 	}
 
@@ -291,7 +293,7 @@ done:
    Fails if NAME is invalid (i.e. too long) or a disk or memory
    error occurs. */
 bool
-dir_add(struct dir *dir, const char *name)
+dir_add(struct dir *dir, const char *name, off_t length, uint32_t flags)
 {
 	struct dir_entry e;
 	off_t ofs;
@@ -321,8 +323,12 @@ dir_add(struct dir *dir, const char *name)
 			break;
 	// TODO: grow directory file size if more slots needed
 
+	if ((flags & INODE_FLAG_IS_DIRECTORY) != 0) {
+		length = DIRECTORY_SIZE_INIT;
+	}
+
 	ino_t ino = 0;
-	if (!inode_create(0, &ino)) {
+	if (!inode_create(length, flags, &ino)) {
 		goto done;
 	}
 

@@ -162,7 +162,7 @@ byte_to_sector(const struct inode *inode, off_t pos, bool alloc)
 }
 
 bool
-inode_disk_create(off_t length, ino_t *out)
+inode_disk_create(off_t length, uint32_t flags, ino_t *out)
 {
 	ASSERT(length >= 0);
 
@@ -177,6 +177,7 @@ inode_disk_create(off_t length, ino_t *out)
 
 	// TODO: mark slot/sector as used in inofile?
 	i->length = length;
+	i->flags = flags;
 	i->magic = INODE_MAGIC;
 
 	const block_sector_t sector = ino_to_inode_disk_sector(*out);

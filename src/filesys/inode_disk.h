@@ -17,16 +17,17 @@ struct inode_disk_index {
 struct inode_disk {
 	struct inode_disk_index idx;
 	off_t length;         /* TODO: change to uint32_t */
+	uint32_t flags;       /* INODE_FLAG_* values. */
 	uint32_t refcnt;      /* TODO: Number of hardlinks to this inode. */
 	uint32_t magic;       /* Magic number. */
-	uint32_t unused[111]; /* Not used. */
+	uint32_t unused[110]; /* Not used. */
 };
 
 /* Returns the block device sector that contains byte offset POS within INODE.
    Returns INODE_SECTOR_UNSET if INODE does not contain data at offset POS. */
 block_sector_t byte_to_sector(const struct inode *inode, off_t pos, bool alloc);
 
-bool inode_disk_create(off_t length, ino_t *out);
+bool inode_disk_create(off_t length, uint32_t flags, ino_t *out);
 off_t inode_disk_to_length(ino_t ino);
 bool inode_disk_set_length(ino_t ino, off_t length);
 
