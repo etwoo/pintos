@@ -6,6 +6,8 @@
 #include "filesys/inode_inmem.h"
 #include "threads/malloc.h"
 
+#include <string.h>
+
 const ino_t ROOT_DIRECTORY_INO = 0;
 
 /* List of open inodes, so that opening a single inode twice
@@ -132,9 +134,7 @@ inode_read_at(struct inode *inode, void *buffer, off_t size, off_t offset)
 		/* Disk sector to read, starting byte offset within sector. */
 		block_sector_t sector_idx =
 			byte_to_sector(inode, offset, false);
-		if (sector_idx == INODE_SECTOR_UNSET) {
-			break;
-		}
+		const bool sparse = (sector_idx == INODE_SECTOR_UNSET);
 		int sector_ofs = offset % BLOCK_SECTOR_SIZE;
 
 		/* Bytes left in inode, bytes left in sector, lesser of the two.
@@ -150,7 +150,10 @@ inode_read_at(struct inode *inode, void *buffer, off_t size, off_t offset)
 			break;
 
 		/* Read sector (or chunk within sector) via buffer cache. */
-		if (!cache_read(sector_idx,
+		if (sparse) {
+			/* Return all-zero values from hole in sparse file. */
+			memset(buffer + bytes_read, 0, chunk_size);
+		} else if (!cache_read(sector_idx,
 		                sector_ofs,
 		                chunk_size,
 		                buffer + bytes_read)) {
