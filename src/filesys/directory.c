@@ -164,6 +164,7 @@ dir_add(struct dir *dir, const char *name, ino_t ino)
 	     ofs += sizeof e)
 		if (!e.in_use)
 			break;
+	// TODO: grow directory file size if more slots needed
 
 	/* Write slot. */
 	e.in_use = true;
