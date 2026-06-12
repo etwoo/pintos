@@ -9,6 +9,7 @@
 #include <string.h>
 
 static const char PATH_SEP_STR[] = "/";
+static const char PATH_SEP_CHAR = '/';
 
 /* A directory. */
 struct dir {
@@ -168,8 +169,9 @@ bool
 dir_lookup_r(struct dir *dir_start, char *path, struct inode **inode)
 {
 	bool success = false;
+	const bool absolute = (path != NULL && path[0] == PATH_SEP_CHAR);
 	struct inode *cur = NULL;
-	struct dir *dir = dir_start;
+	struct dir *dir = absolute ? dir_open_root() : dir_start;
 
 	struct list path_parts;
 	list_init(&path_parts);
