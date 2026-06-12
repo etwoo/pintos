@@ -8,7 +8,7 @@
 #include <debug.h>
 #include <string.h>
 
-#define SECTOR_UNSET UINT32_MAX
+static const block_sector_t CACHE_SECTOR_UNSET = UINT32_MAX;
 
 struct cache_block {
 	enum {
@@ -41,7 +41,7 @@ static void
 cache_block_reset(struct cache_block *b)
 {
 	b->state = CACHE_UNUSED;
-	b->sector = SECTOR_UNSET;
+	b->sector = CACHE_SECTOR_UNSET;
 	b->accessed_at = INT64_MIN;
 	memset(b->data, 0, sizeof(b->data));
 }
@@ -101,7 +101,7 @@ cache_flush_dirty(struct cache_block *b)
 {
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
 
-	ASSERT(b->sector != SECTOR_UNSET);
+	ASSERT(b->sector != CACHE_SECTOR_UNSET);
 	block_write(fs_device, b->sector, b->data);
 
 	ASSERT(b->state == CACHE_DIRTY);
