@@ -23,8 +23,7 @@ struct inode_disk {
 };
 
 /* Returns the block device sector that contains byte offset POS within INODE.
-   Returns SECTOR_UNSET if INODE does not contain data for a byte at offset POS.
- */
+   Returns INODE_SECTOR_UNSET if INODE does not contain data at offset POS. */
 block_sector_t byte_to_sector(const struct inode *inode, off_t pos, bool alloc);
 
 bool inode_disk_create(off_t length, ino_t *out);
