@@ -2,16 +2,9 @@
 
 #include "filesys/cache.h"
 #include "filesys/filesys.h"
-#include "filesys/free-map.h"
 #include "filesys/inode_disk.h"
 #include "filesys/inode_inmem.h"
 #include "threads/malloc.h"
-
-#include <array.h>
-#include <debug.h>
-#include <list.h>
-#include <round.h>
-#include <string.h>
 
 const ino_t ROOT_DIRECTORY_INO = 0;
 
