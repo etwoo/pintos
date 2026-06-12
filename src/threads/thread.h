@@ -123,6 +123,9 @@ struct thread {
 		struct hash page_table;
 		int mmap_generator;
 	} vm;
+	struct {
+		struct dir *cwd;
+	} fs;
 
 	struct list_elem allelem; /* List element for all threads list. */
 

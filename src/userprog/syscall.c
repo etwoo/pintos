@@ -2,6 +2,7 @@
 
 #include "devices/input.h"
 #include "devices/shutdown.h"
+#include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
 #include "threads/interrupt.h"
@@ -392,6 +393,31 @@ syscall_munmap(struct intr_frame *f, int *stack)
 #endif
 }
 
+static void
+syscall_chdir(struct intr_frame *f, int *stack)
+{
+#ifdef FILESYS
+	char *path = NULL;
+	syscall_arg_peek(f, stack++, NULL, NULL, &path);
+
+	struct dir *root = dir_open_root(); // TODO: relative to cwd instead
+	struct inode *i = NULL;
+	const bool lookup_ok = dir_lookup_r(root, path, &i);
+
+	thread_current()->fs.cwd = dir_open(i); /* Takes ownership of inode. */
+	const bool diropen_ok = (thread_current()->fs.cwd != NULL);
+
+	dir_close(root);
+	const bool ok = lookup_ok && diropen_ok;
+
+	f->eax = ok ? 1 : 0; /* chdir() returns bool, not integer code */
+	free(path);
+#else
+	(void)stack; /* Unused. */
+	f->eax = ENOSYS;
+#endif
+
+}
 
 static void
 syscall_inumber(struct intr_frame *f, int *stack)
@@ -462,9 +488,10 @@ syscall_handler(struct intr_frame *f)
 		syscall_munmap(f, kaddr);
 		break;
 	case SYS_CHDIR:
-		// TODO
+		syscall_chdir(f, kaddr);
 		break;
 	case SYS_MKDIR:
+		// TODO
 		break;
 	case SYS_READDIR:
 		break;

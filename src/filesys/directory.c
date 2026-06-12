@@ -8,6 +8,8 @@
 #include <stdio.h>
 #include <string.h>
 
+static const char PATH_SEP_STR[] = "/";
+
 /* A directory. */
 struct dir {
 	struct inode *inode; /* Backing store. */
@@ -36,6 +38,7 @@ struct dir *
 dir_open(struct inode *inode)
 {
 	struct dir *dir = calloc(1, sizeof *dir);
+	// TODO: verify inode corresponds to directory (not reg file)
 	if (inode != NULL && dir != NULL) {
 		dir->inode = inode;
 		dir->pos = 0;
@@ -96,6 +99,7 @@ lookup(const struct dir *dir,
 
 	ASSERT(dir != NULL);
 	ASSERT(name != NULL);
+	// TODO: verify inode corresponds to directory (not reg file)
 
 	for (ofs = 0; inode_read_at(dir->inode, &e, sizeof e, ofs) == sizeof e;
 	     ofs += sizeof e)
@@ -127,6 +131,88 @@ dir_lookup(const struct dir *dir, const char *name, struct inode **inode)
 		*inode = NULL;
 
 	return *inode != NULL;
+}
+
+struct path_part {
+	const char *name; /* Does not own. */
+	struct list_elem elem;
+};
+
+static bool
+path_part_list_init(char *path, struct list *list)
+{
+	char *save_ptr = NULL;
+	for (char *token = strtok_r(path, PATH_SEP_STR, &save_ptr);
+	     token != NULL;
+	     token = strtok_r(NULL, PATH_SEP_STR, &save_ptr)) {
+		struct path_part *p = malloc(sizeof(*p));
+		if (p == NULL) {
+			return false;
+		}
+		list_push_back(list, &p->elem);
+	}
+	return true;
+}
+
+static void
+path_part_list_free(struct list *list)
+{
+	while (!list_empty(list)) {
+		struct list_elem *e = list_pop_front(list);
+		struct path_part *part = list_entry(e, struct path_part, elem);
+		free(part);
+	}
+}
+
+bool
+dir_lookup_r(struct dir *dir_start, char *path, struct inode **inode)
+{
+	bool success = false;
+	struct inode *cur = NULL;
+	struct dir *dir = dir_start;
+
+	struct list path_parts;
+	list_init(&path_parts);
+
+	if (!path_part_list_init(path, &path_parts)) {
+		goto done;
+	}
+
+	struct list_elem *e = list_begin(&path_parts);
+	for (; e != list_end(&path_parts); e = list_next(e)) {
+		struct path_part *part = list_entry(e, struct path_part, elem);
+		// TODO: handle . and ..
+
+		if (cur != NULL) {
+			if (dir != dir_start) {
+				dir_close(dir);
+				dir = NULL;
+			}
+			dir = dir_open(cur); /* Takes ownership of <cur>. */
+			cur = NULL;
+			if (dir == NULL) {
+				goto done;
+			}
+		}
+
+		ASSERT(cur == NULL);
+		ASSERT(dir != NULL);
+
+		if (!dir_lookup(dir, part->name, &cur)) {
+			goto done;
+		}
+	}
+
+	*inode = cur; /* Caller takes ownership of <cur>. */
+	success = true;
+
+done:
+	ASSERT(cur == NULL);
+	if (dir != dir_start) {
+		dir_close(dir);
+	}
+	path_part_list_free(&path_parts);
+	return success;
 }
 
 /* Adds a file named NAME to DIR, which must not already contain a
