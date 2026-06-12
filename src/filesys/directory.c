@@ -43,8 +43,7 @@ struct dir *
 dir_open(struct inode *inode)
 {
 	struct dir *dir = calloc(1, sizeof *dir);
-	// TODO: verify inode corresponds to directory (not reg file)
-	if (inode != NULL && dir != NULL) {
+	if (inode != NULL && inode_isdir(inode) && dir != NULL) {
 		dir->inode = inode;
 		dir->pos = 0;
 		return dir;
@@ -104,7 +103,7 @@ lookup(const struct dir *dir,
 
 	ASSERT(dir != NULL);
 	ASSERT(name != NULL);
-	// TODO: verify dir->inode corresponds to directory (not reg file)
+	ASSERT(inode_isdir(dir->inode));
 
 	for (ofs = 0; inode_read_at(dir->inode, &e, sizeof e, ofs) == sizeof e;
 	     ofs += sizeof e)
