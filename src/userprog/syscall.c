@@ -426,16 +426,14 @@ static void
 syscall_mkdir(struct intr_frame *f, int *stack)
 {
 #ifdef FILESYS
-	char *dirname = NULL;
-	syscall_arg_peek(f, stack++, NULL, NULL, &dirname);
-
-	bool ok = false;
+	char *path = NULL;
+	syscall_arg_peek(f, stack++, NULL, NULL, &path);
 
 	struct dir *cwd = thread_current()->fs.cwd;
-	// TODO: make dir_lookup_r() rig generic, reuse for mkdir at leaf
+	const bool ok = dir_mkdir(cwd, path);
 
 	f->eax = ok ? 1 : 0; /* mkdir() returns bool, not integer code */
-	free(dirname);
+	free(path);
 #else
 	(void)stack; /* Unused. */
 	f->eax = ENOSYS;

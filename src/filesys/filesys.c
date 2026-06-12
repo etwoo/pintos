@@ -50,9 +50,8 @@ filesys_done(void)
 bool
 filesys_create(const char *s, off_t sz)
 {
-	ino_t i = 0;
 	struct dir *d = dir_open_root();
-	bool success = (d != NULL && inode_create(sz, &i) && dir_add(d, s, i));
+	const bool success = (d != NULL && dir_add(d, s));
 	dir_close(d);
 	return success;
 }

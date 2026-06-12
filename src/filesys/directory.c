@@ -171,7 +171,7 @@ path_part_list_init(char *path, struct list *list)
 		p->name = token;
 		list_push_back(list, &p->elem);
 	}
-	return true;
+	return !list_empty(list);
 }
 
 static void
@@ -182,23 +182,19 @@ path_part_list_free(struct list *list)
 	}
 }
 
-bool
-dir_lookup_r(struct dir *dir_start, char *path, struct inode **inode)
+static bool
+dir_lookup_impl(bool absolute,
+                struct dir *dir_start,
+                struct list *path_parts,
+                struct inode **inode)
 {
 	bool success = false;
-	const bool absolute = (path != NULL && path[0] == PATH_SEP_CHAR);
+
 	struct inode *cur = NULL;
 	struct dir *dir = absolute ? dir_open_root() : dir_start;
 
-	struct list path_parts;
-	list_init(&path_parts);
-
-	if (!path_part_list_init(path, &path_parts)) {
-		goto done;
-	}
-
-	struct list_elem *e = list_begin(&path_parts);
-	for (; e != list_end(&path_parts); e = list_next(e)) {
+	struct list_elem *e = list_begin(path_parts);
+	for (; e != list_end(path_parts); e = list_next(e)) {
 		struct path_part *part = list_entry(e, struct path_part, elem);
 		// TODO: handle ".." reaching outside of dir_start
 
@@ -223,6 +219,7 @@ dir_lookup_r(struct dir *dir_start, char *path, struct inode **inode)
 	}
 
 	*inode = cur; /* Caller takes ownership of <cur>. */
+	cur = NULL;
 	success = true;
 
 done:
@@ -230,7 +227,60 @@ done:
 	if (dir != dir_start) {
 		dir_close(dir);
 	}
-	path_part_list_free(&path_parts);
+	path_part_list_free(path_parts);
+	return success;
+}
+
+bool
+dir_lookup_r(struct dir *dir_start, char *path, struct inode **inode)
+{
+	const bool absolute = (path != NULL && path[0] == PATH_SEP_CHAR);
+
+	struct list path_parts;
+	list_init(&path_parts);
+
+	return path_part_list_init(path, &path_parts) &&
+	       dir_lookup_impl(absolute, dir_start, &path_parts, inode);
+}
+
+bool
+dir_mkdir(struct dir *dir_start, char *path)
+{
+	const bool absolute = (path != NULL && path[0] == PATH_SEP_CHAR);
+	bool success = false;
+	struct list_elem *leaf_elem = NULL;
+	struct dir *parent = NULL;
+
+	struct list path_parts;
+	list_init(&path_parts);
+	if (!path_part_list_init(path, &path_parts)) {
+		goto done;
+	}
+
+	leaf_elem = list_pop_back(&path_parts);
+	{
+		struct inode *parent_inode = NULL;
+		if (!dir_lookup_impl(absolute,
+		                     dir_start,
+		                     &path_parts,
+		                     &parent_inode)) {
+			goto done;
+		}
+		parent = dir_open(parent_inode); /* Takes ownership. */
+	}
+
+	struct path_part *leaf = list_entry(leaf_elem, struct path_part, elem);
+	if (!dir_add(parent, leaf->name)) { // TODO: pass flag to create subdir
+		goto done;
+	}
+
+	success = true;
+
+done:
+	dir_close(parent);
+	if (leaf_elem != NULL) {
+		path_part_list_elem_free(leaf_elem);
+	}
 	return success;
 }
 
@@ -241,7 +291,7 @@ done:
    Fails if NAME is invalid (i.e. too long) or a disk or memory
    error occurs. */
 bool
-dir_add(struct dir *dir, const char *name, ino_t ino)
+dir_add(struct dir *dir, const char *name)
 {
 	struct dir_entry e;
 	off_t ofs;
@@ -270,6 +320,11 @@ dir_add(struct dir *dir, const char *name, ino_t ino)
 		if (!e.in_use)
 			break;
 	// TODO: grow directory file size if more slots needed
+
+	ino_t ino = 0;
+	if (!inode_create(0, &ino)) {
+		goto done;
+	}
 
 	/* Write slot. */
 	e.in_use = true;
