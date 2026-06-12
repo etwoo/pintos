@@ -16,7 +16,7 @@ struct inode_disk_index {
 /* On-disk inode. Must be exactly BLOCK_SECTOR_SIZE bytes long. */
 struct inode_disk {
 	struct inode_disk_index idx;
-	off_t length;         /* TODO: change to uint32_t */
+	off_t length;         /* File size in bytes. */
 	uint32_t flags;       /* INODE_FLAG_* values. */
 	uint32_t refcnt;      /* TODO: Number of hardlinks to this inode. */
 	uint32_t magic;       /* Magic number. */
