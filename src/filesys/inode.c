@@ -153,6 +153,8 @@ byte_to_sector_indirect(const struct inode *inode, off_t pos, bool alloc)
 static block_sector_t
 byte_to_sector_indirect_2x(const struct inode *inode, off_t pos, bool alloc)
 {
+	ASSERT(MAX_INDIRECT <= pos && pos < MAX_INDIRECT_2x);
+
 	const block_sector_t indirect_2x =
 		get_inode_disk_member(inode->ino, 13, alloc);
 	if (indirect_2x == SECTOR_UNSET) {
