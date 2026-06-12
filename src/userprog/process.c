@@ -213,6 +213,10 @@ process_exit(int status)
 
 	const bool early_error_in_load = (status == EXIT_NO_LOAD);
 	status = early_error_in_load ? EXIT_EXCEPTION : status;
+	if (!early_error_in_load) {
+		printf("%s: exit(%d)\n", cur->name, status);
+	}
+
 #ifdef VM
 	/* Flush dirty pages to disk, and clear address mappings. */
 	page_destroy();
@@ -263,10 +267,6 @@ process_exit(int status)
 
 	/* Release open directory descriptor for current working directory. */
 	dir_close(cur->fs.cwd);
-
-	if (!early_error_in_load) {
-		printf("%s: exit(%d)\n", cur->name, status);
-	}
 }
 
 /* Sets up the CPU for running user code in the current
