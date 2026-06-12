@@ -167,3 +167,9 @@ file_ino(struct file *file)
 {
 	return inode_get_inumber(file->inode);
 }
+
+bool
+file_isdir(struct file *file)
+{
+	return inode_isdir(file->inode);
+}

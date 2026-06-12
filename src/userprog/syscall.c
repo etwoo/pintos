@@ -441,6 +441,24 @@ syscall_mkdir(struct intr_frame *f, int *stack)
 }
 
 static void
+syscall_isdir(struct intr_frame *f, int *stack)
+{
+#ifdef FILESYS
+	const int fd = *stack++;
+
+	struct file *file = fd_to_file(fd);
+	if (file == NULL) {
+		f->eax = IO_FAIL;
+	} else {
+		f->eax = file_isdir(file);
+	}
+#else
+	(void)stack; /* Unused. */
+	f->eax = ENOSYS;
+#endif
+}
+
+static void
 syscall_inumber(struct intr_frame *f, int *stack)
 {
 #ifdef FILESYS
@@ -517,6 +535,7 @@ syscall_handler(struct intr_frame *f)
 	case SYS_READDIR:
 		break;
 	case SYS_ISDIR:
+		syscall_isdir(f, kaddr);
 		break;
 	case SYS_INUMBER:
 		syscall_inumber(f, kaddr);

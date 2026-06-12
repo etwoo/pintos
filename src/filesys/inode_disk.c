@@ -186,11 +186,25 @@ inode_disk_create(off_t length, uint32_t flags, ino_t *out)
 	return success;
 }
 
+bool
+inode_disk_isdir(ino_t ino)
+{
+	const block_sector_t sector = ino_to_inode_disk_sector(ino);
+	const int pos = offsetof(struct inode_disk, flags);
+
+	uint32_t flags = 0;
+	if (!cache_read(sector, pos, sizeof(flags), &flags)) {
+		return -1;
+	}
+
+	return ((flags & INODE_FLAG_IS_DIRECTORY) != 0);
+}
+
 off_t
 inode_disk_to_length(ino_t ino)
 {
 	const block_sector_t sector = ino_to_inode_disk_sector(ino);
-	const int pos = sizeof(*TYPE_INDEX); // TODO: reconsider hacks
+	const int pos = offsetof(struct inode_disk, length);
 
 	off_t out = 0;
 	if (!cache_read(sector, pos, sizeof(out), &out)) {
@@ -203,6 +217,6 @@ bool
 inode_disk_set_length(ino_t ino, off_t length)
 {
 	const block_sector_t sector = ino_to_inode_disk_sector(ino);
-	const int pos = sizeof(*TYPE_INDEX); // TODO: reconsider hacks
+	const int pos = offsetof(struct inode_disk, length);
 	return cache_write(sector, pos, sizeof(length), &length);
 }

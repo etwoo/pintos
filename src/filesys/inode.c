@@ -248,3 +248,9 @@ inode_length(const struct inode *inode)
 {
 	return inode_disk_to_length(inode->ino);
 }
+
+bool
+inode_isdir(const struct inode *inode)
+{
+	return inode_disk_isdir(inode->ino);
+}
