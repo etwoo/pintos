@@ -435,7 +435,7 @@ syscall_mkdir(struct intr_frame *f, int *stack)
 	char *path = NULL;
 	syscall_arg_peek(f, stack++, NULL, NULL, &path);
 
-	// TODO: push cwd access down into dir_lookup_r?
+	// TODO: push cwd access/lookup down into dir_mkdir?
 	struct dir *cwd = thread_current()->fs.cwd;
 	const bool ok = dir_mkdir(cwd, path);
 
