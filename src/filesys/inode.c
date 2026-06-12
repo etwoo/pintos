@@ -128,8 +128,7 @@ byte_to_sector(const struct inode *inode, off_t pos, bool allocate)
 			return BLOCK_SECTOR_INVALID;
 		}
 		if (allocate && /* Lazy allocation allowed. */
-		    out == INOFILE_SECTOR &&
-		    free_map_allocate(1, &out) &&
+		    out == INOFILE_SECTOR && free_map_allocate(1, &out) &&
 		    !cache_write(indirect, slot * sz, sz, &out)) {
 			free_map_release(out, 1);
 			out = BLOCK_SECTOR_INVALID;
@@ -141,8 +140,18 @@ byte_to_sector(const struct inode *inode, off_t pos, bool allocate)
 	// TODO: lazy allocation for double indirect -- rox-child fails!
 	// TODO: consolidate byte_to_sector() copy-pasta above and below
 	ASSERT(pos < MAX_INDIRECT_2x);
-	const block_sector_t indirect_2x =
+	block_sector_t indirect_2x =
 		ino_to_inode_disk_member(inode->ino, 13);
+	if (allocate && /* Lazy allocation allowed. */
+	    indirect_2x == INOFILE_SECTOR &&
+	    free_map_allocate(1, &indirect_2x) &&
+	    !cache_write(ino_to_inode_disk_sector(inode->ino),
+	                 13 * sizeof(indirect_2x),
+	                 sizeof(indirect_2x),
+	                 &indirect_2x)) {
+		free_map_release(indirect_2x, 1);
+		indirect_2x = BLOCK_SECTOR_INVALID;
+	}
 	if (indirect_2x == BLOCK_SECTOR_INVALID) {
 		return BLOCK_SECTOR_INVALID;
 	}
@@ -154,6 +163,16 @@ byte_to_sector(const struct inode *inode, off_t pos, bool allocate)
 	if (!cache_read(indirect_2x, slot_indirect * sz, sz, &indirect_1x)) {
 		return BLOCK_SECTOR_INVALID;
 	}
+	if (allocate && /* Lazy allocation allowed. */
+	    indirect_1x == INOFILE_SECTOR &&
+	    free_map_allocate(1, &indirect_1x) &&
+	    !cache_write(indirect_2x, slot_indirect * sz, sz, &indirect_1x)) {
+		free_map_release(indirect_1x, 1);
+		indirect_1x = BLOCK_SECTOR_INVALID;
+	}
+	if (indirect_1x == BLOCK_SECTOR_INVALID) {
+		return BLOCK_SECTOR_INVALID;
+	}
 	const off_t relpos_direct = (relpos_indirect % SPAN_INDIRECT);
 	const size_t slot_direct = relpos_direct / BLOCK_SECTOR_SIZE;
 	ASSERT(slot_direct < ARRAY_SIZE(TYPE_INDIRECT->blocks));
@@ -161,6 +180,12 @@ byte_to_sector(const struct inode *inode, off_t pos, bool allocate)
 	ASSERT(sizeof(out) == sz);
 	if (!cache_read(indirect_1x, slot_direct * sz, sz, &out)) {
 		return BLOCK_SECTOR_INVALID;
+	}
+	if (allocate && /* Lazy allocation allowed. */
+	    out == INOFILE_SECTOR && free_map_allocate(1, &out) &&
+	    !cache_write(indirect_1x, slot_direct * sz, sz, &out)) {
+		free_map_release(out, 1);
+		out = BLOCK_SECTOR_INVALID;
 	}
 	return out;
 }
