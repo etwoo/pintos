@@ -261,6 +261,9 @@ process_exit(int status)
 	}
 	lock_release(&cur->wait.lock);
 
+	/* Release open directory descriptor for current working directory. */
+	dir_close(cur->fs.cwd);
+
 	if (!early_error_in_load) {
 		printf("%s: exit(%d)\n", cur->name, status);
 	}

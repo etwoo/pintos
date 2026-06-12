@@ -407,14 +407,11 @@ syscall_chdir(struct intr_frame *f, int *stack)
 
 	bool ok = false;
 
-	// TODO: push cwd logic down into dir_lookup_r?
-	struct dir *old_dir = thread_current()->fs.cwd;
 	struct inode *i = NULL;
-	if (dir_lookup_r(old_dir, path, &i)) {
+	if (dir_lookup_r(path, &i)) {
 		struct dir *new_dir = dir_open(i); /* Takes ownership. */
 		if (new_dir != NULL) {
-			dir_close(old_dir);
-			old_dir = NULL;
+			dir_close(thread_current()->fs.cwd);
 			thread_current()->fs.cwd = new_dir;
 			ok = true;
 		}
@@ -435,9 +432,7 @@ syscall_mkdir(struct intr_frame *f, int *stack)
 	char *path = NULL;
 	syscall_arg_peek(f, stack++, NULL, NULL, &path);
 
-	// TODO: push cwd access/lookup down into dir_mkdir?
-	struct dir *cwd = thread_current()->fs.cwd;
-	const bool ok = dir_mkdir(cwd, path);
+	const bool ok = dir_mkdir(path);
 
 	f->eax = ok ? 1 : 0; /* mkdir() returns bool, not integer code */
 	free(path);
@@ -511,8 +506,6 @@ syscall_handler(struct intr_frame *f)
 {
 	int *kaddr = check_span_is_user_vaddr(f, f->esp, sizeof(int));
 	const int syscall_number = *kaddr++;
-
-	// TODO: lazy init fs.cwd if NULL (cannot do in init_thread)
 
 	switch (syscall_number) {
 	case SYS_HALT:

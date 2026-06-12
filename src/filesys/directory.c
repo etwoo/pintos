@@ -3,6 +3,7 @@
 #include "filesys/filesys.h"
 #include "filesys/inode.h"
 #include "threads/malloc.h"
+#include "threads/thread.h"
 
 #include <list.h>
 #include <stdio.h>
@@ -237,8 +238,18 @@ done:
 	return success;
 }
 
+static struct dir *
+get_cwd(void)
+{
+	struct thread *t = thread_current();
+	if (t->fs.cwd == NULL) {
+		t->fs.cwd = dir_open_root();
+	}
+	return t->fs.cwd;
+}
+
 bool
-dir_lookup_r(struct dir *dir_start, char *path, struct inode **inode)
+dir_lookup_r(char *path, struct inode **inode)
 {
 	const bool absolute = (path != NULL && path[0] == PATH_SEP_CHAR);
 
@@ -246,11 +257,11 @@ dir_lookup_r(struct dir *dir_start, char *path, struct inode **inode)
 	list_init(&path_parts);
 
 	return path_part_list_init(path, &path_parts) &&
-	       dir_lookup_impl(absolute, dir_start, &path_parts, inode);
+	       dir_lookup_impl(absolute, get_cwd(), &path_parts, inode);
 }
 
 bool
-dir_mkdir(struct dir *dir_start, char *path)
+dir_mkdir(char *path)
 {
 	const bool absolute = (path != NULL && path[0] == PATH_SEP_CHAR);
 	bool success = false;
@@ -267,7 +278,7 @@ dir_mkdir(struct dir *dir_start, char *path)
 	{
 		struct inode *parent_inode = NULL;
 		if (!dir_lookup_impl(absolute,
-		                     dir_start,
+		                     get_cwd(),
 		                     &path_parts,
 		                     &parent_inode)) {
 			goto done;
