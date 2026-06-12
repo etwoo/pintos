@@ -40,12 +40,15 @@ cache_read_or_alloc(block_sector_t sector, int pos, bool alloc)
 	if (!cache_read(sector, pos, sizeof(out), &out)) {
 		ASSERT(out == INODE_SECTOR_UNSET);
 	}
-	if (alloc && out == INODE_SECTOR_UNSET) {
-		if (free_map_allocate(1, &out) &&
-		    !cache_write(sector, pos, sizeof(out), &out)) {
+	if (alloc && out == INODE_SECTOR_UNSET && free_map_allocate(1, &out)) {
+		void *zeroes = calloc(1, BLOCK_SECTOR_SIZE);
+		if (zeroes == NULL ||
+		    !cache_write(sector, pos, sizeof(out), &out) ||
+		    !cache_write(out, 0, BLOCK_SECTOR_SIZE, zeroes)) {
 			free_map_release(out, 1);
 			out = INODE_SECTOR_UNSET;
 		}
+		free(zeroes);
 	}
 	return out;
 }
