@@ -403,8 +403,6 @@ syscall_chdir(struct intr_frame *f, int *stack)
 	bool ok = false;
 
 	struct dir *old_dir = thread_current()->fs.cwd;
-	ASSERT(old_dir != NULL);
-
 	struct inode *i = NULL;
 	if (dir_lookup_r(old_dir, path, &i)) {
 		struct dir *new_dir = dir_open(i); /* Takes ownership. */
@@ -418,6 +416,26 @@ syscall_chdir(struct intr_frame *f, int *stack)
 
 	f->eax = ok ? 1 : 0; /* chdir() returns bool, not integer code */
 	free(path);
+#else
+	(void)stack; /* Unused. */
+	f->eax = ENOSYS;
+#endif
+}
+
+static void
+syscall_mkdir(struct intr_frame *f, int *stack)
+{
+#ifdef FILESYS
+	char *dirname = NULL;
+	syscall_arg_peek(f, stack++, NULL, NULL, &dirname);
+
+	bool ok = false;
+
+	struct dir *cwd = thread_current()->fs.cwd;
+	// TODO: make dir_lookup_r() rig generic, reuse for mkdir at leaf
+
+	f->eax = ok ? 1 : 0; /* mkdir() returns bool, not integer code */
+	free(dirname);
 #else
 	(void)stack; /* Unused. */
 	f->eax = ENOSYS;
@@ -496,7 +514,7 @@ syscall_handler(struct intr_frame *f)
 		syscall_chdir(f, kaddr);
 		break;
 	case SYS_MKDIR:
-		// TODO
+		syscall_mkdir(f, kaddr);
 		break;
 	case SYS_READDIR:
 		break;
