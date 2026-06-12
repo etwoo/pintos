@@ -10,7 +10,6 @@
 #include <string.h>
 
 static const char PATH_SEP_STR[] = "/";
-static const char PATH_SEP_CHAR = '/';
 static const char PATH_DOT[] = ".";
 static const char PATH_DOT_DOT[] = "..";
 
@@ -185,18 +184,17 @@ path_part_list_free(struct list *list)
 }
 
 static bool
-dir_lookup_impl(bool absolute,
-                struct dir *dir_start,
+dir_lookup_impl(struct dir *dir_start,
                 struct list *path_parts,
                 struct inode **inode)
 {
 	bool success = false;
 
 	struct inode *cur = NULL;
-	struct dir *dir = absolute ? dir_open_root() : dir_start;
+	struct dir *dir = dir_start;
 
-	if (absolute && list_empty(path_parts)) {
-		/* Accept empty path_parts for absolute paths. */
+	if (list_empty(path_parts)) {
+		/* Accept empty path_parts for path prefix. */
 		cur = inode_open(ROOT_DIRECTORY_INO);
 	}
 
@@ -251,13 +249,11 @@ get_cwd(void)
 bool
 dir_lookup(char *path, struct inode **inode)
 {
-	const bool absolute = (path != NULL && path[0] == PATH_SEP_CHAR);
-
 	struct list path_parts;
 	list_init(&path_parts);
 
 	return path_part_list_init(path, &path_parts) &&
-	       dir_lookup_impl(absolute, get_cwd(), &path_parts, inode);
+	       dir_lookup_impl(get_cwd(), &path_parts, inode);
 }
 
 /* Adds a file named NAME to DIR, which must not already contain a
@@ -321,7 +317,6 @@ dir_leaf_action(char *path,
                 bool on_leaf(struct dir *, struct path_part *, void *),
                 void *aux)
 {
-	const bool absolute = (path != NULL && path[0] == PATH_SEP_CHAR);
 	bool success = false;
 	struct list_elem *leaf_elem = NULL;
 	struct dir *parent = NULL;
@@ -335,8 +330,7 @@ dir_leaf_action(char *path,
 	leaf_elem = list_pop_back(&path_parts);
 	{
 		struct inode *parent_inode = NULL;
-		if (!dir_lookup_impl(absolute,
-		                     get_cwd(),
+		if (!dir_lookup_impl(get_cwd(),
 		                     &path_parts,
 		                     &parent_inode)) {
 			goto done;
