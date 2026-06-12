@@ -180,6 +180,7 @@ inode_write_at(struct inode *inode,
                off_t size,
                off_t offset)
 {
+	const off_t offset_begin = offset;
 	off_t bytes_written = 0;
 
 	if (inode->deny_write_cnt)
@@ -193,16 +194,10 @@ inode_write_at(struct inode *inode,
 		}
 
 		int sector_ofs = offset % BLOCK_SECTOR_SIZE;
-
-		/* Bytes left in inode, bytes left in sector, lesser of the two.
-		 */
-		off_t inode_left = inode_length(inode) - offset;
 		int sector_left = BLOCK_SECTOR_SIZE - sector_ofs;
-		int min_left =
-			inode_left < sector_left ? inode_left : sector_left;
 
 		/* Number of bytes to actually write into this sector. */
-		int chunk_size = size < min_left ? size : min_left;
+		int chunk_size = size < sector_left ? size : sector_left;
 		if (chunk_size <= 0)
 			break;
 
@@ -220,8 +215,8 @@ inode_write_at(struct inode *inode,
 		bytes_written += chunk_size;
 	}
 
-	if (offset + bytes_written > inode_length(inode)) {
-		inode_disk_set_length(inode->ino, offset + bytes_written);
+	if (offset_begin + bytes_written > inode_length(inode)) {
+		inode_disk_set_length(inode->ino, offset_begin + bytes_written);
 	}
 	return bytes_written;
 }
