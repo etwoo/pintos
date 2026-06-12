@@ -382,7 +382,7 @@ load(const char *file_name, void (**eip)(void), void **esp, void **kpage)
 		goto done;
 	}
 
-	const int fd = fd_register(file);
+	const int fd = fd_register(file, NULL);
 
 	/* Read and verify executable header. */
 	if (file_read(file, &ehdr, sizeof ehdr) != sizeof ehdr ||

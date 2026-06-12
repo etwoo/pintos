@@ -216,13 +216,18 @@ syscall_open(struct intr_frame *f, int *stack)
 	syscall_arg_peek(f, stack++, NULL, NULL, &filename);
 
 	acquire_io_lock();
-	struct file *fh = filesys_open(filename);
+	struct file *file = filesys_open(filename);
 	release_io_lock();
 
-	if (fh == NULL) {
+	if (file == NULL) {
 		f->eax = FD_INVALID;
+	} else if (inode_isdir(file_get_inode(file))) {
+		struct dir *dir = dir_open(inode_reopen(file_get_inode(file)));
+		file_close(file);
+		file = NULL;
+		f->eax = fd_register(NULL, dir);
 	} else {
-		f->eax = fd_register(fh);
+		f->eax = fd_register(file, NULL);
 	}
 	free(filename);
 }
@@ -441,17 +446,36 @@ syscall_mkdir(struct intr_frame *f, int *stack)
 }
 
 static void
+syscall_readdir(struct intr_frame *f, int *stack)
+{
+#ifdef FILESYS
+	const int fd = *stack++;
+	void *uaddr = (void *)(*stack++);
+	// TODO: deal with uaddr buffer that spans two kpages
+	void *kaddr = check_span_is_user_vaddr(f, uaddr, NAME_MAX + 1);
+
+	struct dir *dir = fd_to_dir(fd);
+	char bounce[NAME_MAX + 1] = {0};
+	const bool ok = dir != NULL && dir_readdir(dir, bounce);
+	if (ok) {
+		memcpy(kaddr, bounce, sizeof(bounce));
+	}
+
+	f->eax = ok ? 1 : 0; /* readdir() returns bool, not integer code */
+#else
+	(void)stack; /* Unused. */
+	f->eax = ENOSYS;
+#endif
+}
+
+static void
 syscall_isdir(struct intr_frame *f, int *stack)
 {
 #ifdef FILESYS
 	const int fd = *stack++;
 
-	struct file *file = fd_to_file(fd);
-	if (file == NULL) {
-		f->eax = IO_FAIL;
-	} else {
-		f->eax = file_isdir(file);
-	}
+	const bool ok = (fd_to_dir(fd) != NULL);
+	f->eax = ok ? 1 : 0; /* isdir() returns bool, not integer code */
 #else
 	(void)stack; /* Unused. */
 	f->eax = ENOSYS;
@@ -465,10 +489,14 @@ syscall_inumber(struct intr_frame *f, int *stack)
 	const int fd = *stack++;
 
 	struct file *file = fd_to_file(fd);
-	if (file == NULL) {
-		f->eax = IO_FAIL;
+	struct dir *dir = fd_to_dir(fd);
+
+	if (file != NULL) {
+		f->eax = inode_get_inumber(file_get_inode(file));
+	} else if (dir != NULL) {
+		f->eax = inode_get_inumber(dir_get_inode(dir));
 	} else {
-		f->eax = file_ino(file);
+		f->eax = IO_FAIL;
 	}
 #else
 	(void)stack; /* Unused. */
@@ -533,6 +561,7 @@ syscall_handler(struct intr_frame *f)
 		syscall_mkdir(f, kaddr);
 		break;
 	case SYS_READDIR:
+		syscall_readdir(f, kaddr);
 		break;
 	case SYS_ISDIR:
 		syscall_isdir(f, kaddr);
