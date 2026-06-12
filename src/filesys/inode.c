@@ -137,7 +137,6 @@ byte_to_sector(const struct inode *inode, off_t pos, bool allocate)
 		return out;
 	}
 
-	// TODO: lazy allocation for double indirect -- rox-child fails!
 	// TODO: consolidate byte_to_sector() copy-pasta above and below
 	ASSERT(pos < MAX_INDIRECT_2x);
 	block_sector_t indirect_2x =
