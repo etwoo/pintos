@@ -173,6 +173,9 @@ inode_read_at(struct inode *inode, void *buffer, off_t size, off_t offset)
 	inode = NULL; /* Do not access struct inode after this point. */
 
 	const off_t length = inode_disk_to_length(ino);
+	if (length < 0) {
+		return -1;
+	}
 
 	off_t bytes_read = 0;
 
