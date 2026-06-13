@@ -125,6 +125,8 @@ inode_close(struct inode *inode)
 	if (inode == NULL)
 		return;
 
+	struct inode *safe_to_free = NULL;
+
 	lock_acquire(&open_inodes_lock);
 	lock_acquire(&inode->lock);
 
@@ -132,18 +134,20 @@ inode_close(struct inode *inode)
 	if (--inode->open_cnt == 0) {
 		/* Remove from inode list and release lock. */
 		list_remove(&inode->elem);
-
-		/* Deallocate blocks if removed. */
-		if (inode->removed) {
-			// TODO: inode_map_release() for inofile slot
-			// TODO: free_map_release() for direct/indirect blocks
-		}
-
-		free(inode);
+		safe_to_free = inode;
 	}
 
 	lock_release(&inode->lock);
 	lock_release(&open_inodes_lock);
+
+	if (safe_to_free != NULL) {
+		/* Deallocate blocks if removed. */
+		if (safe_to_free->removed) {
+			// TODO: inode_map_release() for inofile slot
+			// TODO: free_map_release() for direct/indirect blocks
+		}
+		free(safe_to_free);
+	}
 }
 
 /* Marks INODE to be deleted when it is closed by the last caller who
