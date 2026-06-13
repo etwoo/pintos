@@ -10,7 +10,7 @@
 #include <round.h>
 
 struct serializable_bitmap {
-	// TODO: lock? or concurrency handled at higher level?
+	struct lock lock;
 	void *memory;
 	struct bitmap *bitmap;
 	block_sector_t sector;
@@ -21,9 +21,10 @@ static struct serializable_bitmap inode_map; /* Free map, one bit per inode. */
 static struct serializable_bitmap block_map; /* Free map, one bit per sector. */
 
 static void
-map_alloc(struct serializable_bitmap *sb, size_t bitcount)
+map_init(struct serializable_bitmap *sb, size_t bitcount)
 {
 	ASSERT(sb->sector != 0);
+	lock_init(&sb->lock);
 
 	const size_t buffer_size = bitmap_buf_size(bitcount);
 	sb->sector_count = DIV_ROUND_UP(buffer_size, BLOCK_SECTOR_SIZE);
@@ -42,10 +43,10 @@ void
 free_map_init(block_sector_t start_sector)
 {
 	inode_map.sector = start_sector;
-	map_alloc(&inode_map, INODE_LIMIT);
+	map_init(&inode_map, INODE_LIMIT);
 
 	block_map.sector = inode_map.sector + inode_map.sector_count;
-	map_alloc(&block_map, block_size(fs_device));
+	map_init(&block_map, block_size(fs_device));
 
 	bitmap_set_multiple(block_map.bitmap,
 	                    INOFILE_SECTOR,
@@ -64,6 +65,12 @@ map_write(struct serializable_bitmap *sb)
 	/* Blit structure to disk. Would be better to deal with endianness and
 	 * generally make serialization more portable. Live with it for now. */
 	for (block_sector_t i = 0; i < sb->sector_count; ++i) {
+		/* It is probably safe to access the memory of underlying
+		   bitmap elements without taking a lock because bitmap
+		   elements are set atomically (though testing them is not
+		   atomic with setting them). In other words, we may write the
+		   bitmap in an intermediate state, but it won't be in a
+		   totally unreadable/unrecognizable state. */
 		const void *buf = sb->memory + (i * BLOCK_SECTOR_SIZE);
 		if (!cache_write(sb->sector + i, 0, BLOCK_SECTOR_SIZE, buf)) {
 			ok = false;
@@ -81,9 +88,15 @@ map_write(struct serializable_bitmap *sb)
 static bool
 map_allocate(struct serializable_bitmap *sb, size_t cnt, block_sector_t *out)
 {
+	lock_acquire(&sb->lock);
 	block_sector_t sector = bitmap_scan_and_flip(sb->bitmap, 0, cnt, false);
+	lock_release(&sb->lock);
+
 	if (sector != BITMAP_ERROR && !map_write(sb)) {
+		lock_acquire(&sb->lock);
+		ASSERT(bitmap_all(sb->bitmap, sector, cnt));
 		bitmap_set_multiple(sb->bitmap, sector, cnt, false);
+		lock_release(&sb->lock);
 		sector = BITMAP_ERROR;
 	}
 	if (sector != BITMAP_ERROR)
@@ -107,8 +120,11 @@ free_map_allocate(size_t cnt, block_sector_t *sectorp)
 static void
 map_release(struct serializable_bitmap *sb, block_sector_t sector, size_t cnt)
 {
+	lock_acquire(&sb->lock);
 	ASSERT(bitmap_all(sb->bitmap, sector, cnt));
 	bitmap_set_multiple(sb->bitmap, sector, cnt, false);
+	lock_release(&sb->lock);
+
 	map_write(sb);
 }
 
