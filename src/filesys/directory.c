@@ -268,8 +268,16 @@ dir_lookup(char *path, struct inode **inode)
 	list_init(&path_parts);
 
 	bool is_absolute = false;
-	return path_part_list_init(path, &path_parts, &is_absolute) &&
-	       dir_lookup_impl(get_cwd(), &path_parts, is_absolute, inode);
+	if (!path_part_list_init(path, &path_parts, &is_absolute)) {
+		return false;
+	}
+
+	if (is_absolute && list_empty(&path_parts)) {
+		*inode = inode_open(ROOT_DIRECTORY_INO);
+		return true;
+	}
+
+	return dir_lookup_impl(get_cwd(), &path_parts, is_absolute, inode);
 }
 
 /* Adds a file named NAME to DIR, which must not already contain a
@@ -346,6 +354,10 @@ dir_leaf_action(char *path,
 
 	bool is_absolute = false;
 	if (!path_part_list_init(path, &path_parts, &is_absolute)) {
+		goto done;
+	}
+
+	if (list_empty(&path_parts)) {
 		goto done;
 	}
 
