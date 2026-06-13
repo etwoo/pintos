@@ -207,6 +207,9 @@ path_part_list_free(struct list *list)
 	}
 }
 
+/* Reach into file.c internals. */
+struct file *file_open(struct inode *);
+
 static bool
 dir_lookup_impl(struct dir *dir_start,
                 struct list *path_parts,

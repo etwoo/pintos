@@ -7,7 +7,6 @@
 struct inode;
 
 /* Opening and closing files. */
-struct file *file_open(struct inode *); // TODO rm, hide struct inode
 struct file *file_reopen(struct file *);
 void file_close(struct file *);
 ino_t file_get_inumber(struct file *);
