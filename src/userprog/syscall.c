@@ -215,19 +215,18 @@ syscall_open(struct intr_frame *f, int *stack)
 	char *filename = NULL;
 	syscall_arg_peek(f, stack++, NULL, NULL, &filename);
 
+	struct file *file = NULL;
+	struct dir *dir = NULL;
+
 	acquire_io_lock();
-	struct file *file = filesys_open(filename);
+	const bool ok = filesys_open_file_or_dir(filename, &file, &dir);
 	release_io_lock();
 
-	if (file == NULL) {
+	if (!ok || (file == NULL && dir == NULL)) {
 		f->eax = FD_INVALID;
-	} else if (inode_isdir(file_get_inode(file))) {
-		struct dir *dir = dir_open(inode_reopen(file_get_inode(file)));
-		file_close(file);
-		file = NULL;
-		f->eax = fd_register(NULL, dir);
 	} else {
-		f->eax = fd_register(file, NULL);
+		ASSERT(file == NULL || dir == NULL); /* Mutually exclusive. */
+		f->eax = fd_register(file, dir);
 	}
 	free(filename);
 }
@@ -412,18 +411,17 @@ syscall_chdir(struct intr_frame *f, int *stack)
 	syscall_arg_peek(f, stack++, NULL, NULL, &path);
 
 	bool ok = false;
+	struct file *file_unexpected = NULL;
+	struct dir *dir_new = NULL;
 
-	struct inode *i = NULL;
-	if (dir_lookup(path, &i)) {
-		struct dir *new_dir = dir_open(i); /* Takes ownership. */
-		if (new_dir != NULL) {
-			dir_close(thread_current()->fs.cwd);
-			thread_current()->fs.cwd = new_dir;
-			ok = true;
-		}
+	if (dir_lookup(path, &file_unexpected, &dir_new) && dir_new != NULL) {
+		dir_close(thread_current()->fs.cwd);
+		thread_current()->fs.cwd = dir_new;
+		ok = true;
 	}
 
 	f->eax = ok ? 1 : 0; /* chdir() returns bool, not integer code */
+	file_close(file_unexpected);
 	free(path);
 #else
 	(void)stack; /* Unused. */
@@ -498,8 +496,7 @@ syscall_inumber(struct intr_frame *f, int *stack)
 		// TODO: add dir_get_inumber(), hide struct inode
 		f->eax = inode_get_inumber(file_get_inode(file));
 	} else if (dir != NULL) {
-		// TODO: add file_get_inumber(), hide struct inode
-		f->eax = inode_get_inumber(dir_get_inode(dir));
+		f->eax = dir_get_inumber(dir);
 	} else {
 		f->eax = IO_FAIL;
 	}

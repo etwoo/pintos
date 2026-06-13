@@ -64,11 +64,27 @@ filesys_create(char *path, off_t sz)
 struct file *
 filesys_open(char *path)
 {
-	struct inode *inode = NULL;
-	if (!dir_lookup(path, &inode)) {
+	struct file *file = NULL;
+	struct dir *dir = NULL;
+	if (!dir_lookup(path, &file, &dir)) {
 		return NULL;
 	}
-	return file_open(inode); /* Takes ownership. */
+
+	if (dir != NULL) {
+		/* Caller expected a directory at <path>, but
+		   a regular file is present there instead. */
+		dir_close(dir);
+		dir = NULL;
+		ASSERT(file == NULL);
+	}
+
+	return file;
+}
+
+bool
+filesys_open_file_or_dir(char *path, struct file **file, struct dir **dir)
+{
+	return dir_lookup(path, file, dir);
 }
 
 /* Deletes the file named NAME.

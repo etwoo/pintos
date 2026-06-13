@@ -2,7 +2,7 @@
 #define FILESYS_DIRECTORY_H
 
 #include "devices/block.h"
-#include "filesys/inode.h"
+#include "filesys/file.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -13,19 +13,15 @@
    retained, but much longer full path names must be allowed. */
 #define NAME_MAX 14
 
-struct inode;
-
 /* Opening and closing directories. */
 bool dir_create_root(void);
-struct dir *dir_open(struct inode *); // TODO rm, hide struct inode
 struct dir *dir_open_root(void);
 struct dir *dir_reopen(struct dir *);
 void dir_close(struct dir *);
-struct inode *dir_get_inode(struct dir *); // TODO rm, hide struct inode
+ino_t dir_get_inumber(struct dir *);
 
 /* Reading and writing. */
-// TODO: add struct file **, struct dir ** params, hide underlying inode
-bool dir_lookup(char *path, struct inode **inode);
+bool dir_lookup(char *path, struct file **file, struct dir **dir);
 bool dir_add(char *path, off_t length);
 bool dir_mkdir(char *path);
 bool dir_remove(char *path);

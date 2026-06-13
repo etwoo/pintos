@@ -50,7 +50,7 @@ dir_create_root(void)
 
 /* Opens and returns the directory for the given INODE, of which
    it takes ownership.  Returns a null pointer on failure. */
-struct dir *
+static struct dir *
 dir_open(struct inode *inode)
 {
 	struct dir *dir = calloc(1, sizeof *dir);
@@ -91,11 +91,11 @@ dir_close(struct dir *dir)
 	}
 }
 
-/* Returns the inode encapsulated by DIR. */
-struct inode *
-dir_get_inode(struct dir *dir)
+/* Returns the identifier of the inode encapsulated by DIR. */
+ino_t
+dir_get_inumber(struct dir *dir)
 {
-	return dir->inode;
+	return inode_get_inumber(dir->inode);
 }
 
 /* Searches DIR for a file with the given NAME.
@@ -211,7 +211,8 @@ static bool
 dir_lookup_impl(struct dir *dir_start,
                 struct list *path_parts,
                 bool is_absolute,
-                struct inode **inode)
+                struct file **file_out,
+                struct dir **dir_out)
 {
 	bool success = false;
 
@@ -252,7 +253,11 @@ dir_lookup_impl(struct dir *dir_start,
 		}
 	}
 
-	*inode = cur; /* Caller takes ownership of <cur>. */
+	if (inode_isdir(cur)) {
+		*dir_out = dir_open(cur); /* Takes ownership. */
+	} else {
+		*file_out = file_open(cur); /* Takes ownership. */
+	}
 	cur = NULL;
 	success = true;
 
@@ -275,7 +280,7 @@ get_cwd(void)
 }
 
 bool
-dir_lookup(char *path, struct inode **inode)
+dir_lookup(char *path, struct file **file, struct dir **dir)
 {
 	struct list path_parts;
 	list_init(&path_parts);
@@ -287,14 +292,14 @@ dir_lookup(char *path, struct inode **inode)
 	if (!path_part_list_init(path, &path_parts, &is_absolute, &is_cwd)) {
 		ok = false;
 	} else if (is_absolute && list_empty(&path_parts)) {
-		*inode = inode_open(ROOT_DIRECTORY_INO);
-		ok = (*inode != NULL);
+		*dir = dir_open_root();
+		ok = (*dir != NULL);
 	} else if (is_cwd) {
-		*inode = inode_reopen(get_cwd()->inode);
-		ok = (*inode != NULL);
+		*dir = dir_reopen(get_cwd());
+		ok = (*dir != NULL);
 	} else {
 		struct dir *cwd = get_cwd();
-		ok = dir_lookup_impl(cwd, &path_parts, is_absolute, inode);
+		ok = dir_lookup_impl(cwd, &path_parts, is_absolute, file, dir);
 	}
 
 	path_part_list_free(&path_parts);
@@ -368,6 +373,7 @@ dir_leaf_action(char *path,
 {
 	bool success = false;
 	struct list_elem *leaf_elem = NULL;
+	struct file *file_unexpected = NULL;
 	struct dir *parent = NULL;
 
 	struct list path_parts;
@@ -384,19 +390,18 @@ dir_leaf_action(char *path,
 	}
 
 	leaf_elem = list_pop_back(&path_parts);
-	{
-		struct inode *parent_inode = NULL;
-		if (!dir_lookup_impl(get_cwd(),
-		                     &path_parts,
-		                     is_absolute,
-		                     &parent_inode)) {
-			goto done;
-		}
 
-		parent = dir_open(parent_inode); /* Takes ownership. */
-		if (parent == NULL) {
-			goto done;
-		}
+	file_unexpected = NULL;
+	if (!dir_lookup_impl(get_cwd(),
+	                     &path_parts,
+	                     is_absolute,
+	                     &file_unexpected,
+	                     &parent)) {
+		goto done;
+	}
+
+	if (parent == NULL) {
+		goto done;
 	}
 
 	struct path_part *leaf = list_entry(leaf_elem, struct path_part, elem);
@@ -407,6 +412,7 @@ dir_leaf_action(char *path,
 	success = true;
 
 done:
+	file_close(file_unexpected);
 	dir_close(parent);
 	if (leaf_elem != NULL) {
 		path_part_list_elem_free(leaf_elem);

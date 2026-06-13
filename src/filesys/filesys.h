@@ -2,6 +2,8 @@
 #define FILESYS_FILESYS_H
 
 #include "devices/block.h"
+#include "filesys/directory.h"
+#include "filesys/file.h"
 #include "filesys/off_t.h"
 
 #include <stdbool.h>
@@ -16,6 +18,7 @@ void filesys_init(bool format);
 void filesys_done(void);
 bool filesys_create(char *path, off_t initial_size);
 struct file *filesys_open(char *path);
+bool filesys_open_file_or_dir(char *path, struct file **file, struct dir **dir);
 bool filesys_remove(char *path);
 
 #endif /* filesys/filesys.h */
