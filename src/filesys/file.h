@@ -10,7 +10,7 @@ struct inode;
 struct file *file_open(struct inode *); // TODO rm, hide struct inode
 struct file *file_reopen(struct file *);
 void file_close(struct file *);
-struct inode *file_get_inode(struct file *); // TODO rm, hide struct inode
+ino_t file_get_inumber(struct file *);
 
 /* Reading and writing. */
 off_t file_read(struct file *, void *, off_t);

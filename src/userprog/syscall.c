@@ -493,8 +493,7 @@ syscall_inumber(struct intr_frame *f, int *stack)
 	struct dir *dir = fd_to_dir(fd);
 
 	if (file != NULL) {
-		// TODO: add dir_get_inumber(), hide struct inode
-		f->eax = inode_get_inumber(file_get_inode(file));
+		f->eax = file_get_inumber(file);
 	} else if (dir != NULL) {
 		f->eax = dir_get_inumber(dir);
 	} else {
