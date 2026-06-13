@@ -30,7 +30,7 @@ filesys_init(bool format)
 
 	if (format) {
 		do_format();
-	} else if (!inode_check(ROOT_DIRECTORY_INO)) {
+	} else if (!inode_check(ROOT_DIRECTORY_INO, INODE_FLAG_IS_DIRECTORY)) {
 		PANIC("File system lacks valid root directory.");
 	}
 

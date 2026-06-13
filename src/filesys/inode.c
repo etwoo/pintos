@@ -26,9 +26,9 @@ inode_init(void)
 }
 
 bool
-inode_check(ino_t ino)
+inode_check(ino_t ino, uint32_t flags)
 {
-	return inode_disk_check(ino);
+	return inode_disk_check(ino, flags);
 }
 
 /* Initializes an inode with LENGTH bytes of data and
