@@ -10,6 +10,7 @@
 #include <string.h>
 
 static const char PATH_SEP_STR[] = "/";
+static const char PATH_SEP_CHAR = '/';
 static const char PATH_DOT[] = ".";
 static const char PATH_DOT_DOT[] = "..";
 
@@ -105,6 +106,12 @@ lookup(const struct dir *dir,
 	ASSERT(name != NULL);
 	ASSERT(inode_isdir(dir->inode));
 
+	if (inode_is_removed(dir->inode)) {
+		/* Refuse new lookups into removed directories (lookups
+		 * preceding removal remain valid). */
+		return false;
+	}
+
 	for (ofs = 0; inode_read_at(dir->inode, &e, sizeof e, ofs) == sizeof e;
 	     ofs += sizeof e)
 		if (e.in_use && !strcmp(name, e.name)) {
@@ -150,8 +157,10 @@ path_part_list_elem_free(struct list_elem *e)
 }
 
 static bool
-path_part_list_init(char *path, struct list *list)
+path_part_list_init(char *path, struct list *list, bool *is_absolute)
 {
+	*is_absolute = (path[0] == PATH_SEP_CHAR);
+
 	char *save_ptr = NULL;
 	for (char *token = strtok_r(path, PATH_SEP_STR, &save_ptr);
 	     token != NULL;
@@ -172,7 +181,8 @@ path_part_list_init(char *path, struct list *list)
 		p->name = token;
 		list_push_back(list, &p->elem);
 	}
-	return !list_empty(list);
+
+	return !list_empty(list) || *is_absolute;
 }
 
 static void
@@ -186,16 +196,21 @@ path_part_list_free(struct list *list)
 static bool
 dir_lookup_impl(struct dir *dir_start,
                 struct list *path_parts,
+                bool is_absolute,
                 struct inode **inode)
 {
 	bool success = false;
 
 	struct inode *cur = NULL;
-	struct dir *dir = dir_start;
+	struct dir *dir = is_absolute ? dir_open_root() : dir_start;
 
 	if (list_empty(path_parts)) {
-		/* Accept empty path_parts for path prefix. */
-		cur = inode_open(ROOT_DIRECTORY_INO);
+		ASSERT(cur == NULL);
+		if (is_absolute) {
+			cur = inode_open(ROOT_DIRECTORY_INO);
+		} else {
+			cur = inode_reopen(dir->inode);
+		}
 	}
 
 	struct list_elem *e = list_begin(path_parts);
@@ -252,8 +267,9 @@ dir_lookup(char *path, struct inode **inode)
 	struct list path_parts;
 	list_init(&path_parts);
 
-	return path_part_list_init(path, &path_parts) &&
-	       dir_lookup_impl(get_cwd(), &path_parts, inode);
+	bool is_absolute = false;
+	return path_part_list_init(path, &path_parts, &is_absolute) &&
+	       dir_lookup_impl(get_cwd(), &path_parts, is_absolute, inode);
 }
 
 /* Adds a file named NAME to DIR, which must not already contain a
@@ -271,6 +287,11 @@ dir_add_leaf(struct dir *dir, const char *name, off_t length, uint32_t flags)
 
 	ASSERT(dir != NULL);
 	ASSERT(name != NULL);
+
+	if (inode_is_removed(dir->inode)) {
+		/* Refuse mutations on removed directories. */
+		return false;
+	}
 
 	/* Check NAME for validity. */
 	if (*name == '\0' || strlen(name) > NAME_MAX)
@@ -322,7 +343,9 @@ dir_leaf_action(char *path,
 
 	struct list path_parts;
 	list_init(&path_parts);
-	if (!path_part_list_init(path, &path_parts)) {
+
+	bool is_absolute = false;
+	if (!path_part_list_init(path, &path_parts, &is_absolute)) {
 		goto done;
 	}
 
@@ -331,9 +354,11 @@ dir_leaf_action(char *path,
 		struct inode *parent_inode = NULL;
 		if (!dir_lookup_impl(get_cwd(),
 		                     &path_parts,
+		                     is_absolute,
 		                     &parent_inode)) {
 			goto done;
 		}
+
 		parent = dir_open(parent_inode); /* Takes ownership. */
 		if (parent == NULL) {
 			goto done;
@@ -353,7 +378,6 @@ done:
 		path_part_list_elem_free(leaf_elem);
 	}
 	return success;
-
 }
 
 static bool
@@ -419,7 +443,9 @@ done:
 }
 
 static bool
-dir_remove_leaf_glue(struct dir *parent, struct path_part *leaf, void *aux UNUSED)
+dir_remove_leaf_glue(struct dir *parent,
+                     struct path_part *leaf,
+                     void *aux UNUSED)
 {
 	return dir_remove_leaf(parent, leaf->name);
 }
