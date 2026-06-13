@@ -298,7 +298,10 @@ dir_lookup(char *path, struct file **file, struct dir **dir)
 		*dir = dir_open_root();
 		ok = (*dir != NULL);
 	} else if (is_cwd) {
-		*dir = dir_reopen(get_cwd());
+		struct dir *cwd = get_cwd();
+		if (!inode_is_removed(cwd->inode)) {
+			*dir = dir_reopen(cwd);
+		}
 		ok = (*dir != NULL);
 	} else {
 		struct dir *cwd = get_cwd();
