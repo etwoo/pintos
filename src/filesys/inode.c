@@ -20,9 +20,7 @@ block_sector_t
 inode_init(void)
 {
 	list_init(&open_inodes);
-
-	/* Allocate enough space in the inofile for 1900 inodes. */
-	return INOFILE_SECTOR + 1900; // TODO: better fix for dir-vine testcase
+	return INOFILE_SECTOR + INODE_LIMIT;
 }
 
 bool

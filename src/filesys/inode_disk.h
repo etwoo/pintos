@@ -3,6 +3,9 @@
 
 #include "filesys/inode.h"
 
+/* Maximum number of supported inodes (files). */
+extern const block_sector_t INODE_LIMIT;
+
 /* Error value returned by byte_to_sector() and similar APIs. */
 extern const block_sector_t INODE_SECTOR_UNSET;
 
