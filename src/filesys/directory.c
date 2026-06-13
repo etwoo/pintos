@@ -251,7 +251,6 @@ done:
 	if (dir != dir_start) {
 		dir_close(dir);
 	}
-	path_part_list_free(path_parts);
 	return success;
 }
 
@@ -288,6 +287,7 @@ dir_lookup(char *path, struct inode **inode)
 		ok = dir_lookup_impl(cwd, &path_parts, is_absolute, inode);
 	}
 
+	path_part_list_free(&path_parts);
 	return ok;
 }
 
@@ -401,6 +401,7 @@ done:
 	if (leaf_elem != NULL) {
 		path_part_list_elem_free(leaf_elem);
 	}
+	path_part_list_free(&path_parts);
 	return success;
 }
 
