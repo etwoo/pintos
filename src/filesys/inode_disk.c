@@ -189,6 +189,17 @@ inode_disk_create(off_t length, uint32_t flags, ino_t *out)
 }
 
 bool
+inode_disk_check(ino_t ino)
+{
+	const block_sector_t sector = ino_to_inode_disk_sector(ino);
+	const int pos = offsetof(struct inode_disk, magic);
+
+	uint32_t magic = 0;
+	return cache_read(sector, pos, sizeof(magic), &magic) &&
+	       magic == INODE_MAGIC;
+}
+
+bool
 inode_disk_isdir(ino_t ino)
 {
 	const block_sector_t sector = ino_to_inode_disk_sector(ino);

@@ -25,6 +25,12 @@ inode_init(void)
 	return INOFILE_SECTOR + 1900; // TODO: better fix for dir-vine testcase
 }
 
+bool
+inode_check(ino_t ino)
+{
+	return inode_disk_check(ino);
+}
+
 /* Initializes an inode with LENGTH bytes of data and
    writes the new inode to sector SECTOR on the file system
    device.
