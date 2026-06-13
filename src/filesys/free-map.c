@@ -17,8 +17,8 @@ struct serializable_bitmap {
 	block_sector_t sector_count;
 };
 
-static struct serializable_bitmap inode_map;
-static struct serializable_bitmap block_map;
+static struct serializable_bitmap inode_map; /* Free map, one bit per inode. */
+static struct serializable_bitmap block_map; /* Free map, one bit per sector. */
 
 static void
 map_alloc(struct serializable_bitmap *sb, size_t bitcount)
