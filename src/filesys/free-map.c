@@ -30,7 +30,6 @@ free_map_init(block_sector_t start_sector)
 		DIV_ROUND_UP(bitmap_file_size(inode_map), BLOCK_SECTOR_SIZE);
 
 	free_map_sector = inode_map_sector + inode_map_sector_count;
-	;
 
 	free_map = bitmap_create(block_size(fs_device));
 	if (free_map == NULL) {
