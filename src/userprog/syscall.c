@@ -10,7 +10,6 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "userprog/fd.h"
-#include "userprog/io.h"
 #include "userprog/pagedir.h"
 #include "userprog/process.h"
 #include "vm/page.h"
@@ -187,9 +186,7 @@ syscall_create(struct intr_frame *f, int *stack)
 	syscall_arg_peek(f, stack++, NULL, NULL, &filename);
 	const unsigned sz = *stack++;
 
-	acquire_io_lock();
 	const bool created = filesys_create(filename, sz);
-	release_io_lock();
 
 	f->eax = created ? 1 : 0; /* create() returns bool, not integer code */
 	free(filename);
@@ -201,9 +198,7 @@ syscall_remove(struct intr_frame *f, int *stack)
 	char *filename = NULL;
 	syscall_arg_peek(f, stack++, NULL, NULL, &filename);
 
-	acquire_io_lock();
 	const bool removed = filesys_remove(filename);
-	release_io_lock();
 
 	f->eax = removed ? 1 : 0; /* remove() returns bool, not integer code */
 	free(filename);
@@ -218,9 +213,7 @@ syscall_open(struct intr_frame *f, int *stack)
 	struct file *file = NULL;
 	struct dir *dir = NULL;
 
-	acquire_io_lock();
 	const bool ok = filesys_open_file_or_dir(filename, &file, &dir);
-	release_io_lock();
 
 	if (!ok || (file == NULL && dir == NULL)) {
 		f->eax = FD_INVALID;
@@ -240,9 +233,7 @@ syscall_filesize(struct intr_frame *f, int *stack)
 	if (file == NULL) {
 		f->eax = FD_INVALID;
 	} else {
-		acquire_io_lock();
 		f->eax = file_length(file);
-		release_io_lock();
 	}
 }
 
@@ -291,7 +282,6 @@ syscall_io(int syscall_number, struct intr_frame *f, int *stack)
 		const size_t segment = MIN(to_next, sz - total_bytes);
 		off_t bytes = 0;
 
-		acquire_io_lock();
 		switch (syscall_number) {
 		case SYS_READ:
 			bytes = file_read(file, kaddr, segment);
@@ -303,7 +293,6 @@ syscall_io(int syscall_number, struct intr_frame *f, int *stack)
 			NOT_REACHED();
 			break;
 		}
-		release_io_lock();
 
 		if (bytes <= 0) {
 			if (bytes < 0) {
@@ -336,9 +325,7 @@ syscall_seek(struct intr_frame *f, int *stack)
 	if (file == NULL) {
 		f->eax = IO_FAIL;
 	} else {
-		acquire_io_lock();
 		file_seek(file, sz);
-		release_io_lock();
 		f->eax = IO_SUCCESS;
 	}
 }
@@ -352,9 +339,7 @@ syscall_tell(struct intr_frame *f, int *stack)
 	if (file == NULL) {
 		f->eax = IO_FAIL;
 	} else {
-		acquire_io_lock();
 		f->eax = file_tell(file);
-		release_io_lock();
 	}
 }
 
@@ -368,9 +353,7 @@ syscall_close(struct intr_frame *f, int *stack)
 		f->eax = IO_FAIL;
 	} else {
 		fd_unregister(fd);
-		acquire_io_lock();
 		file_close(file);
-		release_io_lock();
 		f->eax = IO_SUCCESS;
 	}
 }

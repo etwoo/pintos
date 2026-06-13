@@ -13,7 +13,6 @@
 #include "threads/vaddr.h"
 #include "userprog/fd.h"
 #include "userprog/gdt.h"
-#include "userprog/io.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
 #include "vm/page.h"
@@ -246,9 +245,7 @@ process_exit(int status)
 		free(fde);
 		fde = NULL;
 
-		acquire_io_lock();
 		file_close(file);
-		release_io_lock();
 	}
 
 	/* Register status code with our parent, who may wait() on us. */
@@ -380,8 +377,6 @@ load(char *file_name, void (**eip)(void), void **esp, void **kpage)
 		goto done;
 	process_activate();
 
-	acquire_io_lock(); /* Synchronize filesys.h API usage. */
-
 	/* Open executable file. */
 	file = filesys_open(file_name);
 	if (file == NULL) {
@@ -478,8 +473,6 @@ load(char *file_name, void (**eip)(void), void **esp, void **kpage)
 	file_deny_write(file);
 
 done:
-	/* We arrive here whether the load is successful or not. */
-	release_io_lock();
 	return success;
 }
 
@@ -557,7 +550,6 @@ load_segment(int fd,
 	ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
 	ASSERT(pg_ofs(upage) == 0);
 	ASSERT(ofs % PGSIZE == 0);
-	assert_io_lock_held_by_current_thread();
 	const enum page_rw rw = writable ? PAGE_WRITABLE : PAGE_READONLY;
 
 	void *scratch = malloc(PGSIZE);
