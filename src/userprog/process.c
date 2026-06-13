@@ -557,7 +557,7 @@ load_segment(int fd,
 	ASSERT((read_bytes + zero_bytes) % PGSIZE == 0);
 	ASSERT(pg_ofs(upage) == 0);
 	ASSERT(ofs % PGSIZE == 0);
-	ASSERT(io_lock_held_by_current_thread());
+	assert_io_lock_held_by_current_thread();
 	const enum page_rw rw = writable ? PAGE_WRITABLE : PAGE_READONLY;
 
 	void *scratch = malloc(PGSIZE);

@@ -13,17 +13,23 @@ io_init(void)
 void
 acquire_io_lock(void)
 {
+#ifndef FILESYS
 	lock_acquire(&io_lock);
+#endif
 }
 
 void
 release_io_lock(void)
 {
+#ifndef FILESYS
 	lock_release(&io_lock);
+#endif
 }
 
-bool
-io_lock_held_by_current_thread(void)
+void
+assert_io_lock_held_by_current_thread(void)
 {
-	return lock_held_by_current_thread(&io_lock);
+#ifndef FILESYS
+	ASSERT(lock_held_by_current_thread(&io_lock));
+#endif
 }
