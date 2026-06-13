@@ -56,6 +56,7 @@ free_map_init(block_sector_t start_sector)
 static bool
 map_write(struct serializable_bitmap *sb)
 {
+	ASSERT(sb->memory != NULL);
 	ASSERT(sb->sector != 0);
 	ASSERT(sb->sector_count != 0);
 	bool ok = true;
@@ -126,6 +127,7 @@ free_map_release(block_sector_t sector, size_t cnt)
 static void
 map_open(struct serializable_bitmap *sb)
 {
+	ASSERT(sb->memory != NULL);
 	ASSERT(sb->sector != 0);
 	ASSERT(sb->sector_count != 0);
 
