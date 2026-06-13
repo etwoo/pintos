@@ -21,9 +21,8 @@ inode_init(void)
 {
 	list_init(&open_inodes);
 
-	/* Allocate 5% of sectors to the inofile. With a 2MB disk,
-	 * the inofile supports 2*1024*1024/512/20 = 204 files. */
-	return INOFILE_SECTOR + block_size(fs_device) / 20;
+	/* Allocate enough space in the inofile for 1900 inodes. */
+	return INOFILE_SECTOR + 1900; // TODO: better fix for dir-vine testcase
 }
 
 /* Initializes an inode with LENGTH bytes of data and

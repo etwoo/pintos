@@ -157,9 +157,13 @@ path_part_list_elem_free(struct list_elem *e)
 }
 
 static bool
-path_part_list_init(char *path, struct list *list, bool *is_absolute)
+path_part_list_init(char *path,
+                    struct list *list,
+                    bool *is_absolute,
+                    bool *is_cwd)
 {
 	*is_absolute = (path[0] == PATH_SEP_CHAR);
+	*is_cwd = (0 == strcmp(path, PATH_DOT));
 
 	char *save_ptr = NULL;
 	for (char *token = strtok_r(path, PATH_SEP_STR, &save_ptr);
@@ -182,7 +186,7 @@ path_part_list_init(char *path, struct list *list, bool *is_absolute)
 		list_push_back(list, &p->elem);
 	}
 
-	return !list_empty(list) || *is_absolute;
+	return !list_empty(list) || *is_absolute || *is_cwd;
 }
 
 static void
@@ -267,17 +271,24 @@ dir_lookup(char *path, struct inode **inode)
 	struct list path_parts;
 	list_init(&path_parts);
 
+	bool ok = false;
+
 	bool is_absolute = false;
-	if (!path_part_list_init(path, &path_parts, &is_absolute)) {
-		return false;
-	}
-
-	if (is_absolute && list_empty(&path_parts)) {
+	bool is_cwd = false;
+	if (!path_part_list_init(path, &path_parts, &is_absolute, &is_cwd)) {
+		ok = false;
+	} else if (is_absolute && list_empty(&path_parts)) {
 		*inode = inode_open(ROOT_DIRECTORY_INO);
-		return true;
+		ok = (*inode != NULL);
+	} else if (is_cwd) {
+		*inode = inode_reopen(get_cwd()->inode);
+		ok = (*inode != NULL);
+	} else {
+		struct dir *cwd = get_cwd();
+		ok = dir_lookup_impl(cwd, &path_parts, is_absolute, inode);
 	}
 
-	return dir_lookup_impl(get_cwd(), &path_parts, is_absolute, inode);
+	return ok;
 }
 
 /* Adds a file named NAME to DIR, which must not already contain a
@@ -353,7 +364,8 @@ dir_leaf_action(char *path,
 	list_init(&path_parts);
 
 	bool is_absolute = false;
-	if (!path_part_list_init(path, &path_parts, &is_absolute)) {
+	bool is_cwd = false;
+	if (!path_part_list_init(path, &path_parts, &is_absolute, &is_cwd)) {
 		goto done;
 	}
 
