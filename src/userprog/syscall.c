@@ -315,6 +315,12 @@ syscall_io(int syscall_number, struct intr_frame *f, int *stack)
 
 		total_bytes += bytes;
 	}
+#ifdef FILESYS
+	if (fd_to_dir(fd) != NULL) {
+		ASSERT(file == NULL);
+		total_bytes = -1;
+	}
+#endif
 #ifdef VM
 	page_unpin(uaddr, sz);
 #endif
