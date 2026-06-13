@@ -174,6 +174,7 @@ inode_disk_create(off_t length, uint32_t flags, ino_t *out)
 
 	static ino_t inode_allocator = 0; // TODO: ROOT_DIRECTORY_INO?
 	*out = inode_allocator++;         // TODO: pick free ino in inofile
+	ASSERT(inode_allocator < block_size(fs_device) / 25); // TODO rm
 
 	// TODO: mark slot/sector as used in inofile?
 	i->length = length;

@@ -291,7 +291,6 @@ dir_add_leaf(struct dir *dir, const char *name, off_t length, uint32_t flags)
 	     ofs += sizeof e)
 		if (!e.in_use)
 			break;
-	// TODO: grow directory file size if more slots needed
 
 	if ((flags & INODE_FLAG_IS_DIRECTORY) != 0) {
 		length = DIRECTORY_SIZE_INIT;
