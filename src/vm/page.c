@@ -418,7 +418,7 @@ page_mmap(int fd, void *upage)
 		return pd;
 	}
 
-	const int fd_new = fd_register(reopened);
+	const int fd_new = fd_register(reopened, NULL);
 	struct thread *t = thread_current();
 	pd.id = t->vm.mmap_generator++;
 
