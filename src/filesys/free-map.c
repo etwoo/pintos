@@ -4,6 +4,7 @@
 #include "filesys/filesys.h"
 #include "filesys/inode_disk.h"
 #include "threads/malloc.h"
+#include "threads/synch.h"
 
 #include <bitmap.h>
 #include <debug.h>
