@@ -40,8 +40,8 @@ free_map_init(block_sector_t start_sector)
 	const block_sector_t fs_sector_count = block_size(fs_device);
 
 	free_map_sector = inode_map_sector + inode_map_sector_count;
-	free_map_sector_count =
-		DIV_ROUND_UP(bitmap_buf_size(fs_sector_count), BLOCK_SECTOR_SIZE);
+	free_map_sector_count = DIV_ROUND_UP(bitmap_buf_size(fs_sector_count),
+	                                     BLOCK_SECTOR_SIZE);
 
 	free_map_memory = malloc(bitmap_buf_size(fs_sector_count));
 	if (free_map_memory == NULL) {
@@ -77,12 +77,14 @@ free_map_write(uint32_t flags)
 	 * generally make serialization more portable. Live with it for now. */
 
 	for (block_sector_t i = 0; imap && i < inode_map_sector_count; ++i) {
-		const void *buf = ((void *)inode_map_memory) + (i * BLOCK_SECTOR_SIZE);
+		const void *buf =
+			((void *)inode_map_memory) + (i * BLOCK_SECTOR_SIZE);
 		ok = cache_write(inode_map_sector + i, 0, sz, buf) && ok;
 	}
 
 	for (block_sector_t i = 0; fmap && i < free_map_sector_count; ++i) {
-		const void *buf = ((void *)free_map_memory) + (i * BLOCK_SECTOR_SIZE);
+		const void *buf =
+			((void *)free_map_memory) + (i * BLOCK_SECTOR_SIZE);
 		ok = cache_write(free_map_sector + i, 0, sz, buf) && ok;
 	}
 
@@ -160,7 +162,8 @@ free_map_open(void)
 	/* See free_map_write(). */
 
 	for (block_sector_t i = 0; i < inode_map_sector_count; ++i) {
-		void *buf = ((void *)inode_map_memory) + (i * BLOCK_SECTOR_SIZE);
+		void *buf =
+			((void *)inode_map_memory) + (i * BLOCK_SECTOR_SIZE);
 		(void)cache_read(inode_map_sector + i, 0, sz, buf);
 	}
 
