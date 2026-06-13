@@ -154,9 +154,9 @@ inode_read_at(struct inode *inode, void *buffer, off_t size, off_t offset)
 			/* Return all-zero values from hole in sparse file. */
 			memset(buffer + bytes_read, 0, chunk_size);
 		} else if (!cache_read(sector_idx,
-		                sector_ofs,
-		                chunk_size,
-		                buffer + bytes_read)) {
+		                       sector_ofs,
+		                       chunk_size,
+		                       buffer + bytes_read)) {
 			break;
 		}
 
