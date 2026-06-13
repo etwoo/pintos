@@ -172,6 +172,7 @@ inode_disk_create(off_t length, uint32_t flags, ino_t *out)
 	}
 	ASSERT(sizeof(*i) == BLOCK_SECTOR_SIZE);
 
+	// TODO: below fails persistence, new boot of existing fs trashes root
 	static ino_t inode_allocator = 0; // TODO: ROOT_DIRECTORY_INO?
 	*out = inode_allocator++;         // TODO: pick free ino in inofile
 	ASSERT(inode_allocator < 1900);   // TODO: rm
