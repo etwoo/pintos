@@ -9,6 +9,7 @@
 #include <debug.h>
 #include <round.h>
 
+// TODO: wrap these fields up into a struct, then reduce copy-pasta
 static void *inode_map_memory = NULL;
 static struct bitmap *inode_map = NULL; /* Free map, one bit per inode. */
 static block_sector_t inode_map_sector = UINT32_MAX;
