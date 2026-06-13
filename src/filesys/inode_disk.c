@@ -3,7 +3,6 @@
 #include "filesys/cache.h"
 #include "filesys/filesys.h"
 #include "filesys/free-map.h"
-#include "filesys/inode_inmem.h"
 #include "threads/palloc.h"
 #include "threads/vaddr.h"
 
@@ -104,22 +103,22 @@ get_indirect_2x_block_slot(block_sector_t indirect_2x,
 }
 
 static block_sector_t
-byte_to_sector_direct(const struct inode *inode, off_t pos, bool alloc)
+byte_to_sector_direct(ino_t ino, off_t pos, bool alloc)
 {
 	ASSERT(pos < MAX_DIRECT);
 
 	const size_t slot = pos / BLOCK_SECTOR_SIZE;
 	ASSERT(slot < ARRAY_SIZE(TYPE_INDEX->direct));
-	return get_inode_disk_member(inode->ino, slot, alloc);
+	return get_inode_disk_member(ino, slot, alloc);
 }
 
 static block_sector_t
-byte_to_sector_indirect(const struct inode *inode, off_t pos, bool alloc)
+byte_to_sector_indirect(ino_t ino, off_t pos, bool alloc)
 {
 	ASSERT(MAX_DIRECT <= pos && pos < MAX_INDIRECT);
 
 	const block_sector_t indirect =
-		get_inode_disk_member(inode->ino, 12, alloc);
+		get_inode_disk_member(ino, 12, alloc);
 	if (indirect == INODE_SECTOR_UNSET) {
 		return INODE_SECTOR_UNSET;
 	}
@@ -128,12 +127,12 @@ byte_to_sector_indirect(const struct inode *inode, off_t pos, bool alloc)
 }
 
 static block_sector_t
-byte_to_sector_indirect_2x(const struct inode *inode, off_t pos, bool alloc)
+byte_to_sector_indirect_2x(ino_t ino, off_t pos, bool alloc)
 {
 	ASSERT(MAX_INDIRECT <= pos && pos < MAX_INDIRECT_2x);
 
 	const block_sector_t indirect_2x =
-		get_inode_disk_member(inode->ino, 13, alloc);
+		get_inode_disk_member(ino, 13, alloc);
 	if (indirect_2x == INODE_SECTOR_UNSET) {
 		return INODE_SECTOR_UNSET;
 	}
@@ -148,17 +147,15 @@ byte_to_sector_indirect_2x(const struct inode *inode, off_t pos, bool alloc)
 }
 
 block_sector_t
-byte_to_sector(const struct inode *inode, off_t pos, bool alloc)
+byte_to_sector(ino_t ino, off_t pos, bool alloc)
 {
-	ASSERT(inode != NULL);
-
 	block_sector_t out = INODE_SECTOR_UNSET;
 	if (pos < MAX_DIRECT) {
-		out = byte_to_sector_direct(inode, pos, alloc);
+		out = byte_to_sector_direct(ino, pos, alloc);
 	} else if (pos < MAX_INDIRECT) {
-		out = byte_to_sector_indirect(inode, pos, alloc);
+		out = byte_to_sector_indirect(ino, pos, alloc);
 	} else {
-		out = byte_to_sector_indirect_2x(inode, pos, alloc);
+		out = byte_to_sector_indirect_2x(ino, pos, alloc);
 	}
 
 	return out;

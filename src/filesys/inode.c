@@ -3,13 +3,25 @@
 #include "filesys/cache.h"
 #include "filesys/filesys.h"
 #include "filesys/inode_disk.h"
-#include "filesys/inode_inmem.h"
 #include "threads/malloc.h"
 
+#include <list.h>
 #include <string.h>
 
 const ino_t ROOT_DIRECTORY_INO = 0;
 const uint32_t INODE_FLAG_IS_DIRECTORY = 0x1;
+
+/* In-memory inode. */
+struct inode {
+	struct list_elem elem; /* Element in inode list. */
+	ino_t ino;
+	// TODO: add per-inode lock, many-to-one relationship struct file ->
+	// struct inode, struct dir -> struct inode (see open_cnt); take lock
+	// when incr/decr open_cnt to ensure atomicity
+	int open_cnt;       /* Number of openers. */
+	bool removed;       /* True if deleted, false otherwise. */
+	int deny_write_cnt; /* 0: writes ok, >0: deny writes. */
+};
 
 /* List of open inodes, so that opening a single inode twice
    returns the same `struct inode'. */
@@ -135,7 +147,7 @@ inode_read_at(struct inode *inode, void *buffer, off_t size, off_t offset)
 	while (size > 0) {
 		/* Disk sector to read, starting byte offset within sector. */
 		block_sector_t sector_idx =
-			byte_to_sector(inode, offset, false);
+			byte_to_sector(inode->ino, offset, false);
 		const bool sparse = (sector_idx == INODE_SECTOR_UNSET);
 		int sector_ofs = offset % BLOCK_SECTOR_SIZE;
 
@@ -190,7 +202,7 @@ inode_write_at(struct inode *inode,
 
 	while (size > 0) {
 		/* Sector to write, starting byte offset within sector. */
-		block_sector_t sector_idx = byte_to_sector(inode, offset, true);
+		block_sector_t sector_idx = byte_to_sector(inode->ino, offset, true);
 		if (sector_idx == INODE_SECTOR_UNSET) {
 			break;
 		}
