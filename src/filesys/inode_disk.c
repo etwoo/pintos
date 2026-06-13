@@ -4,7 +4,8 @@
 #include "filesys/filesys.h"
 #include "filesys/free-map.h"
 #include "filesys/inode_inmem.h"
-#include "threads/malloc.h"
+#include "threads/palloc.h"
+#include "threads/vaddr.h"
 
 #include <array.h>
 #include <debug.h>
@@ -41,7 +42,8 @@ cache_read_or_alloc(block_sector_t sector, int pos, bool alloc)
 		ASSERT(out == INODE_SECTOR_UNSET);
 	}
 	if (alloc && out == INODE_SECTOR_UNSET && free_map_allocate(1, &out)) {
-		void *zeroes = calloc(1, BLOCK_SECTOR_SIZE);
+		ASSERT(BLOCK_SECTOR_SIZE <= PGSIZE);
+		void *zeroes = palloc_get_page(PAL_ZERO);
 		if (zeroes == NULL ||
 		    /* Update containing block to refer to allocated sector. */
 		    !cache_write(sector, pos, sizeof(out), &out) ||
@@ -50,7 +52,7 @@ cache_read_or_alloc(block_sector_t sector, int pos, bool alloc)
 			free_map_release(out, 1);
 			out = INODE_SECTOR_UNSET;
 		}
-		free(zeroes);
+		palloc_free_page(zeroes);
 	}
 	return out;
 }
@@ -166,10 +168,11 @@ inode_disk_create(off_t length, uint32_t flags, ino_t *out)
 {
 	ASSERT(length >= 0);
 
-	struct inode_disk *i = calloc(1, sizeof(*i));
+	struct inode_disk *i = palloc_get_page(PAL_ZERO);
 	if (i == NULL) {
 		return -1;
 	}
+	ASSERT(sizeof(*i) <= PGSIZE);
 	ASSERT(sizeof(*i) == BLOCK_SECTOR_SIZE);
 
 	// TODO: below fails persistence, new boot of existing fs trashes root
@@ -184,7 +187,7 @@ inode_disk_create(off_t length, uint32_t flags, ino_t *out)
 
 	const block_sector_t sector = ino_to_inode_disk_sector(*out);
 	const bool success = cache_write(sector, 0, BLOCK_SECTOR_SIZE, i);
-	free(i);
+	palloc_free_page(i);
 	return success;
 }
 
