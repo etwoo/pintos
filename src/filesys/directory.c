@@ -440,6 +440,18 @@ dir_remove_leaf(struct dir *dir, const char *name)
 	if (inode == NULL)
 		goto done;
 
+	if (inode_isdir(inode)) {
+		struct dir_entry e;
+		for (size_t ofs = 0;
+		     inode_read_at(inode, &e, sizeof(e), ofs) == sizeof(e);
+		     ofs += sizeof(e)) {
+			if (e.in_use) {
+				/* Cannot remove non-empty subdirectory. */
+				goto done;
+			}
+		}
+	}
+
 	/* Erase directory entry. */
 	e.in_use = false;
 	if (inode_write_at(dir->inode, &e, sizeof e, ofs) != sizeof e)
