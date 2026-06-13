@@ -3,16 +3,19 @@
 #include "filesys/cache.h"
 #include "filesys/filesys.h"
 #include "filesys/inode_disk.h"
+#include "threads/malloc.h"
 
 #include <bitmap.h>
 #include <debug.h>
 #include <round.h>
 
-static struct bitmap *inode_map; /* Free map, one bit per inode. */
+static void *inode_map_memory = NULL;
+static struct bitmap *inode_map = NULL; /* Free map, one bit per inode. */
 static block_sector_t inode_map_sector = UINT32_MAX;
 static block_sector_t inode_map_sector_count = UINT32_MAX;
 
-static struct bitmap *free_map; /* Free map, one bit per sector. */
+static void *free_map_memory = NULL;
+static struct bitmap *free_map = NULL; /* Free map, one bit per sector. */
 static block_sector_t free_map_sector = UINT32_MAX;
 static block_sector_t free_map_sector_count = UINT32_MAX;
 
@@ -21,23 +24,33 @@ void
 free_map_init(block_sector_t start_sector)
 {
 	inode_map_sector = start_sector;
+	inode_map_sector_count =
+		DIV_ROUND_UP(bitmap_buf_size(INODE_LIMIT), BLOCK_SECTOR_SIZE);
 
-	inode_map = bitmap_create(INODE_LIMIT);
-	if (inode_map == NULL) {
+	inode_map_memory = malloc(bitmap_buf_size(INODE_LIMIT));
+	if (inode_map_memory == NULL) {
 		PANIC("bitmap creation failed -- too many inodes");
 	}
-	inode_map_sector_count =
-		DIV_ROUND_UP(bitmap_file_size(inode_map), BLOCK_SECTOR_SIZE);
+	inode_map = bitmap_create_in_buf(INODE_LIMIT,
+	                                 inode_map_memory,
+	                                 bitmap_buf_size(INODE_LIMIT));
+	ASSERT(inode_map != NULL);
+
+	const block_sector_t fs_sector_count = block_size(fs_device);
 
 	free_map_sector = inode_map_sector + inode_map_sector_count;
+	free_map_sector_count =
+		DIV_ROUND_UP(bitmap_buf_size(fs_sector_count), BLOCK_SECTOR_SIZE);
 
-	free_map = bitmap_create(block_size(fs_device));
-	if (free_map == NULL) {
+	free_map_memory = malloc(bitmap_buf_size(fs_sector_count));
+	if (free_map_memory == NULL) {
 		PANIC("bitmap creation failed -- block device is too large");
 	}
+	free_map = bitmap_create_in_buf(fs_sector_count,
+	                                free_map_memory,
+	                                bitmap_buf_size(fs_sector_count));
+	ASSERT(free_map != NULL);
 
-	free_map_sector_count =
-		DIV_ROUND_UP(bitmap_file_size(free_map), BLOCK_SECTOR_SIZE);
 	bitmap_set_multiple(free_map,
 	                    INOFILE_SECTOR,
 	                    free_map_sector + free_map_sector_count,
@@ -63,12 +76,12 @@ free_map_write(uint32_t flags)
 	 * generally make serialization more portable. Live with it for now. */
 
 	for (block_sector_t i = 0; imap && i < inode_map_sector_count; ++i) {
-		const void *buf = ((void *)inode_map) + (i * BLOCK_SECTOR_SIZE);
+		const void *buf = ((void *)inode_map_memory) + (i * BLOCK_SECTOR_SIZE);
 		ok = cache_write(inode_map_sector + i, 0, sz, buf) && ok;
 	}
 
 	for (block_sector_t i = 0; fmap && i < free_map_sector_count; ++i) {
-		const void *buf = ((void *)free_map) + (i * BLOCK_SECTOR_SIZE);
+		const void *buf = ((void *)free_map_memory) + (i * BLOCK_SECTOR_SIZE);
 		ok = cache_write(free_map_sector + i, 0, sz, buf) && ok;
 	}
 
@@ -121,12 +134,14 @@ map_release(uint32_t flags, block_sector_t sector, size_t cnt)
 	free_map_write(flags);
 }
 
-void inode_map_release(block_sector_t sector, size_t cnt)
+void
+inode_map_release(block_sector_t sector, size_t cnt)
 {
 	map_release(WRITE_INODE_MAP, sector, cnt);
 }
 
-void free_map_release(block_sector_t sector, size_t cnt)
+void
+free_map_release(block_sector_t sector, size_t cnt)
 {
 	map_release(WRITE_FREE_MAP, sector, cnt);
 }
@@ -144,12 +159,12 @@ free_map_open(void)
 	/* See free_map_write(). */
 
 	for (block_sector_t i = 0; i < inode_map_sector_count; ++i) {
-		void *buf = ((void *)inode_map) + (i * BLOCK_SECTOR_SIZE);
+		void *buf = ((void *)inode_map_memory) + (i * BLOCK_SECTOR_SIZE);
 		(void)cache_read(inode_map_sector + i, 0, sz, buf);
 	}
 
 	for (block_sector_t i = 0; i < free_map_sector_count; ++i) {
-		void *buf = ((void *)free_map) + (i * BLOCK_SECTOR_SIZE);
+		void *buf = ((void *)free_map_memory) + (i * BLOCK_SECTOR_SIZE);
 		(void)cache_read(free_map_sector + i, 0, sz, buf);
 	}
 }

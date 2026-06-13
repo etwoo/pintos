@@ -313,17 +313,6 @@ bitmap_scan_and_flip(struct bitmap *b, size_t start, size_t cnt, bool value)
 	return idx;
 }
 
-/* File input and output. */
-
-#ifdef FILESYS
-/* Returns the number of bytes needed to store B in a file. */
-size_t
-bitmap_file_size(const struct bitmap *b)
-{
-	return byte_cnt(b->bit_cnt);
-}
-#endif /* FILESYS */
-
 /* Debugging. */
 
 /* Dumps the contents of B to the console as hexadecimal. */
