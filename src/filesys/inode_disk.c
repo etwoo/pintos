@@ -176,15 +176,14 @@ inode_disk_create(off_t length, uint32_t flags, ino_t *out)
 	ASSERT(sizeof(*i) <= PGSIZE);
 	ASSERT(sizeof(*i) == BLOCK_SECTOR_SIZE);
 
-	// TODO: below fails persistence, new boot of existing fs trashes root
-	static ino_t inode_allocator = 0;      // TODO: ROOT_DIRECTORY_INO?
-	*out = inode_allocator++;              // TODO: pick free ino in inofile
-	ASSERT(inode_allocator < INODE_LIMIT); // TODO
-
-	// TODO: mark slot/sector as used in inofile?
 	i->length = length;
 	i->flags = flags;
 	i->magic = INODE_MAGIC;
+
+	if (!inode_map_allocate(1, out)) {
+		return false;
+	}
+	ASSERT(*out < INODE_LIMIT);
 
 	const block_sector_t sector = ino_to_inode_disk_sector(*out);
 	const bool success = cache_write(sector, 0, BLOCK_SECTOR_SIZE, i);

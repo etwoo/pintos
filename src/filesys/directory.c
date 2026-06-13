@@ -29,13 +29,23 @@ struct dir_entry {
 
 static const off_t DIRECTORY_SIZE_INIT = 16 * sizeof(struct dir_entry);
 
-/* Creates a directory with space for ENTRY_CNT entries in the
+/* Creates root directory with space for ENTRY_CNT entries in the
    given SECTOR.  Returns true if successful, false on failure. */
 bool
-dir_create(void)
+dir_create_root(void)
 {
+	struct dir *root = dir_open_root();
+	if (root != NULL) {
+		return true; /* Root directory already exists. */
+	}
+
 	ino_t ino = 0;
-	return inode_create(DIRECTORY_SIZE_INIT, INODE_FLAG_IS_DIRECTORY, &ino);
+	if (inode_create(DIRECTORY_SIZE_INIT, INODE_FLAG_IS_DIRECTORY, &ino)) {
+		ASSERT(ino == ROOT_DIRECTORY_INO);
+		return true;
+	}
+
+	return false;
 }
 
 /* Opens and returns the directory for the given INODE, of which

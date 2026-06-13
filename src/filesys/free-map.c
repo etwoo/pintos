@@ -136,6 +136,8 @@ void free_map_release(block_sector_t sector, size_t cnt)
 void
 free_map_open(void)
 {
+	ASSERT(inode_map_sector != UINT32_MAX);
+	ASSERT(inode_map_sector_count != UINT32_MAX);
 	ASSERT(free_map_sector != UINT32_MAX);
 	ASSERT(free_map_sector_count != UINT32_MAX);
 	const int sz = BLOCK_SECTOR_SIZE;

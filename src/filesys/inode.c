@@ -107,10 +107,8 @@ inode_close(struct inode *inode)
 
 		/* Deallocate blocks if removed. */
 		if (inode->removed) {
-			// TODO: free_map_release(), if free_map_allocate() was
-			// called lazily; check on-disk structures? free both
-			// slot in on-disk inofile and associated direct,
-			// indirect, indirect_2x blocks?
+			// TODO: inode_map_release() for inofile slot
+			// TODO: free_map_release() for direct/indirect blocks
 		}
 
 		free(inode);
