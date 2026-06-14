@@ -2,6 +2,7 @@
 
 #include "filesys/filesys.h"
 #include "filesys/inode.h"
+#include "filesys/inode_disk.h"
 #include "threads/malloc.h"
 #include "threads/thread.h"
 
@@ -122,7 +123,7 @@ dir_get_inumber(struct dir *dir)
    directory entry if OFSP is non-null.
    otherwise, returns false and ignores EP and OFSP. */
 static bool
-lookup(const struct dir *dir,
+lookup(const struct dir *dir, // TODO: rm this helper function?
        const char *name,
        struct dir_entry *ep,
        off_t *ofsp)
@@ -348,6 +349,66 @@ dir_lookup(char *path, struct file **file, struct dir **dir)
 	return ok;
 }
 
+static bool
+dir_read_entry(struct inode *inode, off_t offset, struct dir_entry *out)
+{
+	inode_lock_held_by_current_thread(inode);
+	const off_t sz = sizeof(*out);
+	return inode_locked_read_at(inode, out, sz, offset) == sz;
+}
+
+static size_t
+dir_count_entries(struct inode *inode)
+{
+	inode_lock_held_by_current_thread(inode);
+	size_t count = 0;
+
+	struct dir_entry e = {0};
+	for (off_t o = 0; dir_read_entry(inode, o, &e); o += sizeof(e)) {
+		if (e.in_use && !is_dotdot(e.name)) {
+			++count;
+		}
+	}
+
+	return count;
+}
+
+static bool
+dir_allocate_entry(struct inode *inode, const struct dir_entry *to_write)
+{
+	inode_lock_held_by_current_thread(inode);
+	off_t ofs = 0;
+
+	/* Set OFS to offset of free slot.
+	   If there are no free slots, then it will be set to the
+	   current end-of-file.
+
+	   inode_read_at() will only return a short read at end of file.
+	   Otherwise, we'd need to verify that we didn't get a short
+	   read due to something intermittent such as low memory. */
+	struct dir_entry e = {0};
+	for (; dir_read_entry(inode, ofs, &e); ofs += sizeof(e)) {
+		if (!e.in_use) {
+			break;
+		}
+	}
+
+	const off_t sz = sizeof(*to_write);
+	return inode_locked_write_at(inode, to_write, sz, ofs) == sz;
+}
+
+static bool
+dir_erase_entry(struct inode *inode, off_t pos)
+{
+	inode_lock_held_by_current_thread(inode);
+
+	struct dir_entry e = {0};
+	e.in_use = false;
+
+	const off_t sz = sizeof(e);
+	return inode_locked_write_at(inode, &e, sz, pos) == sz;
+}
+
 /* Adds a file named NAME to DIR, which must not already contain a
    file by that name.  The file's inode is in sector
    INODE_SECTOR.
@@ -362,14 +423,21 @@ dir_add_leaf(struct dir *dir,
              ino_t *ino_preallocated)
 {
 	struct dir_entry e;
-	off_t ofs;
 	bool success = false;
+	ino_t new_ino = 0; /* Sentinel Value. */
 
 	ASSERT(dir != NULL);
 	ASSERT(name != NULL);
 
-	// TODO: hold per-inode lock across lookup, get offset, write
-	// necessary to avoid concurrent touch/mkdir clobbering each other
+	/* Hold per-inode lock, unique per on-disk directory, to prevent TOCTOU
+	   bugs when checking for collision with an existing directory, choosing
+	   a free dir_entry, and adding the requested entry for NAME. */
+	inode_lock_acquire(dir->inode);
+
+	/* Refuse changes to removed directories. */
+	if (inode_locked_is_removed(dir->inode)) {
+		goto done;
+	}
 
 	/* Check NAME for validity. */
 	if (*name == '\0' ||           /* Name must be non-empty. */
@@ -378,50 +446,42 @@ dir_add_leaf(struct dir *dir,
 		goto done;
 	}
 
-	if (inode_is_removed(dir->inode)) {
-		/* Refuse mutations on removed directories. */
-		goto done;
+	/* Check that NAME is not in use. */
+	for (off_t o = 0; dir_read_entry(dir->inode, o, &e); o += sizeof(e)) {
+		if (e.in_use && 0 == strcmp(name, e.name)) {
+			goto done;
+		}
 	}
 
-	/* Check that NAME is not in use. */
-	if (lookup(dir, name, NULL, NULL))
-		goto done;
-
-	/* Set OFS to offset of free slot.
-	   If there are no free slots, then it will be set to the
-	   current end-of-file.
-
-	   inode_read_at() will only return a short read at end of file.
-	   Otherwise, we'd need to verify that we didn't get a short
-	   read due to something intermittent such as low memory. */
-	for (ofs = 0; inode_read_at(dir->inode, &e, sizeof e, ofs) == sizeof e;
-	     ofs += sizeof e)
-		if (!e.in_use)
-			break;
-
-	if ((flags & INODE_FLAG_IS_DIR) != 0) {
+	const bool isdir = ((flags & INODE_FLAG_IS_DIR) != 0);
+	if (isdir) {
 		length = DIRECTORY_SIZE_INIT;
 	}
 
-	ino_t ino = 0;
 	if (ino_preallocated != NULL) {
-		ino = *ino_preallocated;
-	} else if (!inode_create(length, flags, &ino)) {
+		new_ino = *ino_preallocated;
+	} else if (!inode_create(length, flags, &new_ino)) {
 		goto done;
 	}
 
-	if ((flags & INODE_FLAG_IS_DIR) != 0 && !is_dotdot(name) &&
-	    !dir_add_dotdot(ino, dir_get_inumber(dir))) {
-		goto done;
-	}
-
-	/* Write slot. */
-	e.in_use = true;
+	e.ino = new_ino;
 	strlcpy(e.name, name, sizeof e.name);
-	e.ino = ino;
-	success = inode_write_at(dir->inode, &e, sizeof e, ofs) == sizeof e;
+	e.in_use = true;
+
+	success = dir_allocate_entry(dir->inode, &e);
 
 done:
+	inode_lock_release(dir->inode);
+
+	if (success &&          /* Added new dir_entry successfully. */
+	    isdir &&            /* New dir_entry is a subdirectory.  */
+	    !is_dotdot(name) && /* Subdirectory name is not ".."     */
+	    new_ino > 0 &&      /* See note on Sentinel Value above. */
+	    /* Add special ".." as first dir_entry in new directory. */
+	    !dir_add_dotdot(new_ino, dir_get_inumber(dir))) {
+		success = false;
+	}
+
 	return success;
 }
 
@@ -520,58 +580,75 @@ dir_add_dotdot(ino_t child, ino_t dotdot)
 static bool
 dir_remove_leaf(struct dir *dir, const char *name)
 {
-	struct dir_entry e;
-	struct inode *inode = NULL;
+	struct dir_entry e = {0};
+	bool found_entry = false;
+	struct inode *to_remove = NULL;
 	bool success = false;
-	off_t ofs;
+	off_t ofs = 0;
 
 	ASSERT(dir != NULL);
 	ASSERT(name != NULL);
 
-	// TODO: hold per-inode lock across lookup->ofs, overwrite @ofs
-	// this is important to avoid race like:
-	// 1) thread A does lookup on N, gets offset X
-	// 2) scheduler preempts A, runs thread B
-	// 3) thread B does lookup on N, gets offset X
-	// 4) thread B removes entry at offset X
-	// 5) scheduler runs thread C
-	// 6) thread C searches for first free entry, gets offset X
-	// 7) thread C adds a new entry with name N1 at offset X
-	// 8) scheduler preempts C, runs threads A
-	// 9) thread A removes entry at offset X, clobbering thread C's work
+	/* Example TOCTOU (race condition) to avoid with locking:
 
-	/* Find directory entry. */
-	if (!lookup(dir, name, &e, &ofs))
-		goto done;
+	   1) thread A finds name N1 in directory D at offset X
+	   2) scheduler preempts thread A, runs thread B
+	   3) thread B finds name N1 in directory D at offset X
+	   4) thread B removes entry at offset X
+	   5) scheduler runs thread C
+	   6) thread C finds free entry in directory D at offset X
+	   7) thread C adds a new file with name N2 at offset X
+	   8) scheduler preempts thread C, runs threads A
+	   9) thread A removes entry at offset X
 
-	/* Open inode. */
-	inode = inode_open(e.ino);
-	if (inode == NULL)
-		goto done;
+	   Thread A deletes file named N2, instead of file named N1! */
+	inode_lock_acquire(dir->inode);
 
-	if (inode_isdir(inode)) {
-		struct dir_entry e;
-		for (size_t ofs = 0;
-		     inode_read_at(inode, &e, sizeof(e), ofs) == sizeof(e);
-		     ofs += sizeof(e)) {
-			if (e.in_use && !is_dotdot(e.name)) {
-				/* Cannot remove non-empty subdirectory. */
-				goto done;
-			}
+	/* Find directory entry to remove. */
+	for (; dir_read_entry(dir->inode, ofs, &e); ofs += sizeof(e)) {
+		if (e.in_use && 0 == strcmp(name, e.name)) {
+			found_entry = true;
+			break;
 		}
 	}
 
-	/* Erase directory entry. */
-	e.in_use = false;
-	if (inode_write_at(dir->inode, &e, sizeof e, ofs) != sizeof e)
+	if (!found_entry) {
 		goto done;
+	}
 
-	/* Remove inode. */
-	inode_remove(inode);
-	success = true;
+	to_remove = inode_open(e.ino);
+	if (to_remove == NULL) {
+		goto done;
+	}
+
+	if (inode_disk_isdir(e.ino)) {
+		/* Directory hierarchy must be a tree. Barring on-disk
+		   corruption, there should never be cycles. Given this
+		   assumption, it should be safe to acquire the inode lock
+		   of a subdirectory while holding the parent directory inode
+		   lock, without causing AB-BA deadlocks. In other words, the
+		   directory hierarchy implicitly forces inode locks to be
+		   acquired in a consistent order by all threads. */
+		inode_lock_acquire(to_remove);
+		const bool nonempty = dir_count_entries(to_remove);
+		inode_lock_acquire(to_remove);
+
+		/* Cannot remove non-empty subdirectory. */
+		if (nonempty) {
+			goto done;
+		}
+	}
+
+	success = dir_erase_entry(dir->inode, ofs);
 
 done:
-	inode_close(inode);
+	inode_lock_release(dir->inode);
+
+	if (success && to_remove != NULL) {
+		inode_remove(to_remove);
+	}
+	inode_close(to_remove);
+
 	return success;
 }
 
@@ -597,6 +674,7 @@ dir_readdir(struct dir *dir, char name[NAME_MAX + 1])
 {
 	struct dir_entry e;
 
+	// TODO: should this take lock, sychronize with add/remove?
 	while (inode_read_at(dir->inode, &e, sizeof e, dir->pos) == sizeof e) {
 		dir->pos += sizeof e;
 		if (e.in_use && !is_dotdot(e.name)) {

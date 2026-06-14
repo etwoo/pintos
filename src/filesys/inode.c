@@ -160,13 +160,9 @@ inode_remove(struct inode *inode)
 	lock_release(&inode->lock);
 }
 
-/* Reads SIZE bytes from INODE into BUFFER, starting at position OFFSET.
-   Returns the number of bytes actually read, which may be less
-   than SIZE if an error occurs or end of file is reached. */
-off_t
-inode_read_at(struct inode *inode, void *buffer, off_t size, off_t offset)
+static off_t
+inode_read_impl(ino_t ino, void *buffer, off_t size, off_t offset)
 {
-	const ino_t ino = inode_get_inumber(inode);
 	const off_t length = inode_disk_to_length(ino);
 	if (length < 0) {
 		return -1;
@@ -212,22 +208,26 @@ inode_read_at(struct inode *inode, void *buffer, off_t size, off_t offset)
 	return bytes_read;
 }
 
-/* Writes SIZE bytes from BUFFER into INODE, starting at OFFSET.
-   Returns the number of bytes actually written, which may be
-   less than SIZE if end of file is reached or an error occurs.
-   (Normally a write at end of file would extend the inode, but
-   growth is not yet implemented.) */
 off_t
-inode_write_at(struct inode *inode,
-               const void *buffer,
-               off_t size,
-               off_t offset)
+inode_locked_read_at(struct inode *, void *buffer, off_t size, off_t offset)
 {
-	lock_acquire(&inode->lock);
-	const ino_t ino = inode->ino;
-	const bool deny_write = (inode->deny_write_cnt > 0);
-	lock_release(&inode->lock);
+	lock_held_by_current_thread(&inode->lock);
+	return inode_read_impl(inode->ino, buffer, size, offset);
+}
 
+/* Reads SIZE bytes from INODE into BUFFER, starting at position OFFSET.
+   Returns the number of bytes actually read, which may be less
+   than SIZE if an error occurs or end of file is reached. */
+off_t
+inode_read_at(struct inode *inode, void *buffer, off_t size, off_t offset)
+{
+	const ino_t ino = inode_get_inumber(inode);
+	return inode_read_impl(ino, buffer, size, offset);
+}
+
+static off_t
+inode_write_impl(ino_t ino, void *buffer, off_t size, off_t offset)
+{
 	const off_t offset_begin = offset;
 	off_t bytes_written = 0;
 
@@ -272,6 +272,34 @@ inode_write_at(struct inode *inode,
 	return bytes_written;
 }
 
+off_t
+inode_locked_write_at(struct inode *inode,
+                      void *buffer,
+                      off_t size,
+                      off_t offset)
+{
+	lock_held_by_current_thread(&inode->lock);
+	return inode_write_impl(inode->ino, buffer, size, offset);
+}
+
+/* Writes SIZE bytes from BUFFER into INODE, starting at OFFSET.
+   Returns the number of bytes actually written, which may be
+   less than SIZE if end of file is reached or an error occurs.
+   (Normally a write at end of file would extend the inode, but
+   growth is not yet implemented.) */
+off_t
+inode_write_at(struct inode *inode,
+               const void *buffer,
+               off_t size,
+               off_t offset)
+{
+	lock_acquire(&inode->lock);
+	const ino_t ino = inode->ino;
+	const bool deny_write = (inode->deny_write_cnt > 0);
+	lock_release(&inode->lock);
+	return inode_write_impl(ino, buffer, size, offset);
+}
+
 /* Disables writes to INODE.
    May be called at most once per inode opener. */
 void
@@ -296,16 +324,6 @@ inode_allow_write(struct inode *inode)
 	lock_release(&inode->lock);
 }
 
-bool
-inode_is_removed(struct inode *inode)
-{
-	lock_acquire(&inode->lock);
-	const bool removed = inode->removed;
-	lock_release(&inode->lock);
-
-	return removed;
-}
-
 /* Returns the length, in bytes, of INODE's data. */
 off_t
 inode_length(struct inode *inode)
@@ -317,4 +335,29 @@ bool
 inode_isdir(struct inode *inode)
 {
 	return inode_disk_isdir(inode_get_inumber(inode));
+}
+
+void
+inode_lock_acquire(struct inode *inode)
+{
+	lock_acquire(&inode->lock);
+}
+
+void
+inode_lock_release(struct inode *inode)
+{
+	lock_release(&inode->lock);
+}
+
+void
+inode_lock_held_by_current_thread(struct inode *inode)
+{
+	lock_held_by_current_thread(&inode->lock):
+}
+
+bool
+inode_locked_is_removed(struct inode *inode)
+{
+	lock_held_by_current_thread(&inode->lock);
+	return inode->removed;
 }
