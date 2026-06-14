@@ -9,7 +9,7 @@
 #include <array.h>
 #include <debug.h>
 
-const block_sector_t INODE_LIMIT = 1900; // TODO: dir-vine needs high limit
+const block_sector_t INODE_LIMIT = 512; /* Note: dir-vine test needs >=406 */
 const block_sector_t INODE_SECTOR_UNSET = 0;
 static const uint32_t INODE_MAGIC = 0x494e4f44;
 
