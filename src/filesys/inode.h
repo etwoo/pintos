@@ -9,7 +9,7 @@
 typedef uint32_t ino_t;
 
 extern const ino_t ROOT_DIRECTORY_INO;
-extern const uint32_t INODE_FLAG_IS_DIRECTORY;
+extern const uint32_t INODE_FLAG_IS_DIR;
 
 block_sector_t inode_init(void);
 bool inode_check(ino_t, uint32_t);

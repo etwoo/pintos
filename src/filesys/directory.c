@@ -18,6 +18,7 @@ static const char PATH_DOT_DOT[] = "..";
 struct dir {
 	struct inode *inode; /* Backing store. */
 	off_t pos;           /* Current position. */
+	ino_t ino_dotdot;    /* Parent directory when originally opened. */
 };
 
 /* A single directory entry. */
@@ -29,6 +30,20 @@ struct dir_entry {
 
 static const off_t DIRECTORY_SIZE_INIT = 16 * sizeof(struct dir_entry);
 
+static bool
+is_dot(const char *name)
+{
+	return (0 == strcmp(name, PATH_DOT));
+}
+
+static bool
+is_dotdot(const char *name)
+{
+	return (0 == strcmp(name, PATH_DOT_DOT));
+}
+
+static bool dir_add_dotdot(ino_t, ino_t);
+
 /* Creates root directory with space for ENTRY_CNT entries in the
    given SECTOR.  Returns true if successful, false on failure. */
 bool
@@ -36,13 +51,14 @@ dir_create_root(void)
 {
 	struct dir *root = dir_open_root();
 	if (root != NULL) {
+		dir_close(root);
 		return true; /* Root directory already exists. */
 	}
 
 	ino_t ino = 0;
-	if (inode_create(DIRECTORY_SIZE_INIT, INODE_FLAG_IS_DIRECTORY, &ino)) {
+	if (inode_create(DIRECTORY_SIZE_INIT, INODE_FLAG_IS_DIR, &ino)) {
 		ASSERT(ino == ROOT_DIRECTORY_INO);
-		return true;
+		return dir_add_dotdot(ROOT_DIRECTORY_INO, ROOT_DIRECTORY_INO);
 	}
 
 	return false;
@@ -51,12 +67,13 @@ dir_create_root(void)
 /* Opens and returns the directory for the given INODE, of which
    it takes ownership.  Returns a null pointer on failure. */
 static struct dir *
-dir_open(struct inode *inode)
+dir_open(struct inode *inode, ino_t dotdot)
 {
 	struct dir *dir = calloc(1, sizeof *dir);
 	if (inode != NULL && inode_isdir(inode) && dir != NULL) {
 		dir->inode = inode;
 		dir->pos = 0;
+		dir->ino_dotdot = dotdot;
 		return dir;
 	} else {
 		inode_close(inode);
@@ -70,7 +87,8 @@ dir_open(struct inode *inode)
 struct dir *
 dir_open_root(void)
 {
-	return dir_open(inode_open(ROOT_DIRECTORY_INO));
+	const ino_t dotdot = ROOT_DIRECTORY_INO; /* Root is its own parent. */
+	return dir_open(inode_open(ROOT_DIRECTORY_INO), dotdot);
 }
 
 /* Opens and returns a new directory for the same inode as DIR.
@@ -78,7 +96,7 @@ dir_open_root(void)
 struct dir *
 dir_reopen(struct dir *dir)
 {
-	return dir_open(inode_reopen(dir->inode));
+	return dir_open(inode_reopen(dir->inode), dir->ino_dotdot);
 }
 
 /* Destroys DIR and frees associated resources. */
@@ -154,6 +172,25 @@ dir_lookup_leaf(const struct dir *dir, const char *name, struct inode **inode)
 	return *inode != NULL;
 }
 
+static struct dir *
+dir_open_disk(struct inode *inode)
+{
+	struct dir *dir = dir_open(inode, ROOT_DIRECTORY_INO);
+	if (dir == NULL) {
+		return NULL;
+	}
+
+	struct inode *parent = NULL;
+	if (!dir_lookup_leaf(dir, PATH_DOT_DOT, &parent)) {
+		dir_close(dir);
+		return NULL;
+	}
+
+	ASSERT(parent != NULL);
+	dir->ino_dotdot = inode_get_inumber(parent);
+	return dir;
+}
+
 struct path_part {
 	const char *name; /* Does not own. */
 	struct list_elem elem;
@@ -173,18 +210,18 @@ path_part_list_init(char *path,
                     bool *is_cwd)
 {
 	*is_absolute = (path[0] == PATH_SEP_CHAR);
-	*is_cwd = (0 == strcmp(path, PATH_DOT));
+	*is_cwd = is_dot(path);
 
 	char *save_ptr = NULL;
 	for (char *token = strtok_r(path, PATH_SEP_STR, &save_ptr);
 	     token != NULL;
 	     token = strtok_r(NULL, PATH_SEP_STR, &save_ptr)) {
-		if (0 == strcmp(token, PATH_DOT)) {
+		if (is_dot(token)) {
 			continue;
 		}
 
 		/* Simplify ".." where possible, like: a/../b/c -> b/c. */
-		if (0 == strcmp(token, PATH_DOT_DOT) && !list_empty(list)) {
+		if (is_dotdot(token) && !list_empty(list)) {
 			path_part_list_elem_free(list_pop_back(list));
 		}
 
@@ -234,14 +271,13 @@ dir_lookup_impl(struct dir *dir_start,
 	struct list_elem *e = list_begin(path_parts);
 	for (; e != list_end(path_parts); e = list_next(e)) {
 		struct path_part *part = list_entry(e, struct path_part, elem);
-		// TODO: handle ".." reaching outside of dir_start
 
 		if (cur != NULL) {
 			if (dir != dir_start) {
 				dir_close(dir);
 				dir = NULL;
 			}
-			dir = dir_open(cur); /* Takes ownership of <cur>. */
+			dir = dir_open_disk(cur); /* Takes ownership. */
 			cur = NULL;
 			if (dir == NULL) {
 				goto done;
@@ -257,7 +293,7 @@ dir_lookup_impl(struct dir *dir_start,
 	}
 
 	if (inode_isdir(cur)) {
-		*dir_out = dir_open(cur); /* Takes ownership. */
+		*dir_out = dir_open_disk(cur); /* Takes ownership. */
 	} else {
 		*file_out = file_open(cur); /* Takes ownership. */
 	}
@@ -319,7 +355,11 @@ dir_lookup(char *path, struct file **file, struct dir **dir)
    Fails if NAME is invalid (i.e. too long) or a disk or memory
    error occurs. */
 static bool
-dir_add_leaf(struct dir *dir, const char *name, off_t length, uint32_t flags)
+dir_add_leaf(struct dir *dir,
+             const char *name,
+             off_t length,
+             uint32_t flags,
+             ino_t *ino_preallocated)
 {
 	struct dir_entry e;
 	off_t ofs;
@@ -334,8 +374,11 @@ dir_add_leaf(struct dir *dir, const char *name, off_t length, uint32_t flags)
 	}
 
 	/* Check NAME for validity. */
-	if (*name == '\0' || strlen(name) > NAME_MAX)
+	if (*name == '\0' ||           /* Name must be non-empty. */
+	    strlen(name) > NAME_MAX || /* Name must fit within dir_entry. */
+	    is_dot(name)) {
 		return false;
+	}
 
 	/* Check that NAME is not in use. */
 	if (lookup(dir, name, NULL, NULL))
@@ -353,12 +396,20 @@ dir_add_leaf(struct dir *dir, const char *name, off_t length, uint32_t flags)
 		if (!e.in_use)
 			break;
 
-	if ((flags & INODE_FLAG_IS_DIRECTORY) != 0) {
+	if ((flags & INODE_FLAG_IS_DIR) != 0) {
 		length = DIRECTORY_SIZE_INIT;
 	}
 
 	ino_t ino = 0;
-	if (!inode_create(length, flags, &ino)) {
+	if (ino_preallocated != NULL) {
+		ino = *ino_preallocated;
+	} else if (!inode_create(length, flags, &ino)) {
+		goto done;
+	}
+
+	if ((flags & INODE_FLAG_IS_DIR) != 0 &&
+	    !is_dotdot(name) &&
+	    !dir_add_dotdot(ino, dir_get_inumber(dir))) {
 		goto done;
 	}
 
@@ -431,7 +482,7 @@ static bool
 dir_touch_leaf(struct dir *parent, struct path_part *leaf, void *aux)
 {
 	const off_t *length = aux;
-	return dir_add_leaf(parent, leaf->name, *length, 0);
+	return dir_add_leaf(parent, leaf->name, *length, 0, NULL);
 }
 
 bool
@@ -443,13 +494,22 @@ dir_add(char *path, off_t length)
 static bool
 dir_mkdir_leaf(struct dir *parent, struct path_part *leaf, void *aux UNUSED)
 {
-	return dir_add_leaf(parent, leaf->name, 0, INODE_FLAG_IS_DIRECTORY);
+	return dir_add_leaf(parent, leaf->name, 0, INODE_FLAG_IS_DIR, NULL);
 }
 
 bool
 dir_mkdir(char *path)
 {
 	return dir_leaf_action(path, dir_mkdir_leaf, NULL);
+}
+
+static bool
+dir_add_dotdot(ino_t child, ino_t dotdot)
+{
+	struct dir *d = dir_open(inode_open(child), dotdot);
+	bool ok = dir_add_leaf(d, PATH_DOT_DOT, 0, INODE_FLAG_IS_DIR, &dotdot);
+	dir_close(d);
+	return ok;
 }
 
 /* Removes any entry for NAME in DIR.
@@ -525,7 +585,7 @@ dir_readdir(struct dir *dir, char name[NAME_MAX + 1])
 
 	while (inode_read_at(dir->inode, &e, sizeof e, dir->pos) == sizeof e) {
 		dir->pos += sizeof e;
-		if (e.in_use) {
+		if (e.in_use && !is_dotdot(e.name)) {
 			strlcpy(name, e.name, NAME_MAX + 1);
 			return true;
 		}

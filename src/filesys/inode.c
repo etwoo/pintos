@@ -10,7 +10,7 @@
 #include <string.h>
 
 const ino_t ROOT_DIRECTORY_INO = 0;
-const uint32_t INODE_FLAG_IS_DIRECTORY = 0x1;
+const uint32_t INODE_FLAG_IS_DIR = 0x1;
 
 /* In-memory inode. */
 struct inode {

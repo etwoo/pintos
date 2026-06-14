@@ -200,7 +200,7 @@ inode_disk_check(ino_t ino, uint32_t flags)
 		return false;
 	}
 
-	if ((flags & INODE_FLAG_IS_DIRECTORY) != 0 && !inode_disk_isdir(ino)) {
+	if ((flags & INODE_FLAG_IS_DIR) != 0 && !inode_disk_isdir(ino)) {
 		return false;
 	}
 
@@ -218,7 +218,7 @@ inode_disk_isdir(ino_t ino)
 		return -1;
 	}
 
-	return ((flags & INODE_FLAG_IS_DIRECTORY) != 0);
+	return ((flags & INODE_FLAG_IS_DIR) != 0);
 }
 
 off_t
