@@ -77,6 +77,10 @@ cache_read_or_alloc(block_sector_t sector, int pos, struct lock *alloc)
 	    test == INODE_SECTOR_UNSET) {
 		/* Update inofile to refer to allocated sector. */
 		success = cache_write(sector, pos, sizeof(out), &out);
+	} else if (test != INODE_SECTOR_UNSET) {
+		/* Return sector allocated by another concurrent writer. */
+		out = test;
+		success = true;
 	}
 
 	lock_release(alloc);
