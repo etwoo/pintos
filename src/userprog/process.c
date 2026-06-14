@@ -262,12 +262,8 @@ process_exit(int status)
 	lock_release(&cur->wait.lock);
 
 	/* Release open directory descriptor for current working directory. */
-#if 0
-	/* TODO: dir_close() below leads to double-free and heap corruption of
-	   malloc() internals. Not sure why. For now, just leak the dir. */
 	dir_close(cur->fs.cwd);
 	cur->fs.cwd = NULL;
-#endif
 }
 
 /* Sets up the CPU for running user code in the current
