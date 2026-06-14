@@ -145,6 +145,7 @@ inode_close(struct inode *inode)
 		if (safe_to_free->removed) {
 			// TODO: inode_map_release() for inofile slot
 			// TODO: free_map_release() for direct/indirect blocks
+			//^^^ probably related to dir-vine-persistence failure
 		}
 		free(safe_to_free);
 	}
