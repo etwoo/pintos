@@ -66,11 +66,17 @@ cache_read_or_alloc(block_sector_t sector, int pos, struct lock *alloc)
 	}
 
 	/* Use test-and-test-and-set when updating the inofile to refer to
-	 * newly-allocated sectors. Use caller-provided, per-inode lock to
-	 * prevent concurrent writers from clobbering one another's writes and
-	 * orphaning sectors, i.e. creating marked-as-used sectors that are not
-	 * actually reachable from the inofile. */
-	lock_acquire(alloc);
+	   newly-allocated sectors. Use caller-provided, per-inode lock to
+	   prevent concurrent writers from clobbering one another's writes and
+	   orphaning sectors, i.e. creating marked-as-used sectors that are not
+	   actually reachable from the inofile.
+
+	   Some callers already hold the lock. Hack recursive mutex for now. */
+	bool locked = false;
+	if (!lock_held_by_current_thread(alloc)) {
+		locked = true;
+		lock_acquire(alloc);
+	}
 
 	block_sector_t test = INODE_SECTOR_UNSET;
 	if (cache_read(sector, pos, sizeof(test), &test) &&
@@ -83,7 +89,9 @@ cache_read_or_alloc(block_sector_t sector, int pos, struct lock *alloc)
 		success = true;
 	}
 
-	lock_release(alloc);
+	if (locked) {
+		lock_release(alloc);
+	}
 
 done:
 	if (!success && out != INODE_SECTOR_UNSET) {

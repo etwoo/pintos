@@ -229,7 +229,11 @@ inode_read_at(struct inode *inode, void *buffer, off_t size, off_t offset)
 }
 
 static off_t
-inode_write_impl(ino_t ino, const void *buffer, off_t size, off_t offset)
+inode_write_impl(ino_t ino,
+                 struct lock *inode_lock,
+                 const void *buffer,
+                 off_t size,
+                 off_t offset)
 {
 	const off_t offset_begin = offset;
 	off_t bytes_written = 0;
@@ -237,7 +241,7 @@ inode_write_impl(ino_t ino, const void *buffer, off_t size, off_t offset)
 	while (size > 0) {
 		/* Sector to write, starting byte offset within sector. */
 		block_sector_t sector_idx =
-			byte_to_sector(ino, offset, &inode->lock);
+			byte_to_sector(ino, offset, inode_lock);
 		if (sector_idx == INODE_SECTOR_UNSET) {
 			break;
 		}
@@ -278,7 +282,8 @@ inode_locked_write_at(struct inode *inode,
                       off_t offset)
 {
 	lock_held_by_current_thread(&inode->lock);
-	return inode_write_impl(inode->ino, buffer, size, offset);
+	const ino_t ino = inode->ino;
+	return inode_write_impl(ino, &inode->lock, buffer, size, offset);
 }
 
 /* Writes SIZE bytes from BUFFER into INODE, starting at OFFSET.
@@ -301,7 +306,7 @@ inode_write_at(struct inode *inode,
 		return 0;
 	}
 
-	return inode_write_impl(ino, buffer, size, offset);
+	return inode_write_impl(ino, &inode->lock, buffer, size, offset);
 }
 
 /* Disables writes to INODE.
