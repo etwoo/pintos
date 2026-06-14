@@ -43,6 +43,66 @@ is_dotdot(const char *name)
 	return (0 == strcmp(name, PATH_DOT_DOT));
 }
 
+static bool
+dir_read_entry(struct inode *inode, off_t offset, struct dir_entry *out)
+{
+	inode_lock_held_by_current_thread(inode);
+	const off_t sz = sizeof(*out);
+	return inode_locked_read_at(inode, out, sz, offset) == sz;
+}
+
+static size_t
+dir_count_entries(struct inode *inode)
+{
+	inode_lock_held_by_current_thread(inode);
+	size_t count = 0;
+
+	struct dir_entry e = {0};
+	for (off_t o = 0; dir_read_entry(inode, o, &e); o += sizeof(e)) {
+		if (e.in_use && !is_dotdot(e.name)) {
+			++count;
+		}
+	}
+
+	return count;
+}
+
+static bool
+dir_allocate_entry(struct inode *inode, const struct dir_entry *to_write)
+{
+	inode_lock_held_by_current_thread(inode);
+	off_t ofs = 0;
+
+	/* Set OFS to offset of free slot.
+	   If there are no free slots, then it will be set to the
+	   current end-of-file.
+
+	   inode_read_at() will only return a short read at end of file.
+	   Otherwise, we'd need to verify that we didn't get a short
+	   read due to something intermittent such as low memory. */
+	struct dir_entry e = {0};
+	for (; dir_read_entry(inode, ofs, &e); ofs += sizeof(e)) {
+		if (!e.in_use) {
+			break;
+		}
+	}
+
+	const off_t sz = sizeof(*to_write);
+	return inode_locked_write_at(inode, to_write, sz, ofs) == sz;
+}
+
+static bool
+dir_erase_entry(struct inode *inode, off_t pos)
+{
+	inode_lock_held_by_current_thread(inode);
+
+	struct dir_entry e = {0};
+	e.in_use = false;
+
+	const off_t sz = sizeof(e);
+	return inode_locked_write_at(inode, &e, sz, pos) == sz;
+}
+
 static bool dir_add_dotdot(ino_t, ino_t);
 
 /* Creates root directory with space for ENTRY_CNT entries in the
@@ -117,59 +177,37 @@ dir_get_inumber(struct dir *dir)
 	return inode_get_inumber(dir->inode);
 }
 
-/* Searches DIR for a file with the given NAME.
-   If successful, returns true, sets *EP to the directory entry
-   if EP is non-null, and sets *OFSP to the byte offset of the
-   directory entry if OFSP is non-null.
-   otherwise, returns false and ignores EP and OFSP. */
-static bool
-lookup(const struct dir *dir, // TODO: rm this helper function?
-       const char *name,
-       struct dir_entry *ep,
-       off_t *ofsp)
-{
-	struct dir_entry e;
-	size_t ofs;
-
-	ASSERT(dir != NULL);
-	ASSERT(name != NULL);
-	ASSERT(inode_isdir(dir->inode));
-
-	if (inode_is_removed(dir->inode)) {
-		/* Refuse new lookups into removed directories (lookups
-		 * preceding removal remain valid). */
-		return false;
-	}
-
-	for (ofs = 0; inode_read_at(dir->inode, &e, sizeof e, ofs) == sizeof e;
-	     ofs += sizeof e)
-		if (e.in_use && !strcmp(name, e.name)) {
-			if (ep != NULL)
-				*ep = e;
-			if (ofsp != NULL)
-				*ofsp = ofs;
-			return true;
-		}
-	return false;
-}
-
 /* Searches DIR for a file with the given NAME
    and returns true if one exists, false otherwise.
    On success, sets *INODE to an inode for the file, otherwise to
    a null pointer.  The caller must close *INODE. */
 static bool
-dir_lookup_leaf(const struct dir *dir, const char *name, struct inode **inode)
+dir_lookup_leaf(struct dir *dir, const char *name, struct inode **inode)
 {
-	struct dir_entry e;
-
 	ASSERT(dir != NULL);
 	ASSERT(name != NULL);
+	*inode = NULL;
 
-	if (lookup(dir, name, &e, NULL))
-		*inode = inode_open(e.ino);
-	else
-		*inode = NULL;
+	/* See dir_add_leaf() and dir_remove_leaf(). */
+	inode_lock_acquire(dir->inode);
 
+	if (inode_locked_is_removed(dir->inode)) {
+		/* Refuse new lookups into removed directories (lookups
+		 * preceding removal remain valid). */
+		goto done;
+	}
+
+	/* Find requested directory entry. */
+	struct dir_entry e = {0};
+	for (off_t o = 0; dir_read_entry(dir->inode, o, &e); o += sizeof(e)) {
+		if (e.in_use && 0 == strcmp(name, e.name)) {
+			*inode = inode_open(e.ino);
+			goto done;
+		}
+	}
+
+done:
+	inode_lock_release(dir->inode);
 	return *inode != NULL;
 }
 
@@ -336,7 +374,10 @@ dir_lookup(char *path, struct file **file, struct dir **dir)
 		ok = (*dir != NULL);
 	} else if (is_cwd) {
 		struct dir *cwd = get_cwd();
-		if (!inode_is_removed(cwd->inode)) {
+		inode_lock_acquire(cwd->inode);
+		const bool is_removed = inode_locked_is_removed(cwd->inode);
+		inode_lock_release(cwd->inode);
+		if (!is_removed) {
 			*dir = dir_reopen(cwd);
 		}
 		ok = (*dir != NULL);
@@ -347,66 +388,6 @@ dir_lookup(char *path, struct file **file, struct dir **dir)
 
 	path_part_list_free(&path_parts);
 	return ok;
-}
-
-static bool
-dir_read_entry(struct inode *inode, off_t offset, struct dir_entry *out)
-{
-	inode_lock_held_by_current_thread(inode);
-	const off_t sz = sizeof(*out);
-	return inode_locked_read_at(inode, out, sz, offset) == sz;
-}
-
-static size_t
-dir_count_entries(struct inode *inode)
-{
-	inode_lock_held_by_current_thread(inode);
-	size_t count = 0;
-
-	struct dir_entry e = {0};
-	for (off_t o = 0; dir_read_entry(inode, o, &e); o += sizeof(e)) {
-		if (e.in_use && !is_dotdot(e.name)) {
-			++count;
-		}
-	}
-
-	return count;
-}
-
-static bool
-dir_allocate_entry(struct inode *inode, const struct dir_entry *to_write)
-{
-	inode_lock_held_by_current_thread(inode);
-	off_t ofs = 0;
-
-	/* Set OFS to offset of free slot.
-	   If there are no free slots, then it will be set to the
-	   current end-of-file.
-
-	   inode_read_at() will only return a short read at end of file.
-	   Otherwise, we'd need to verify that we didn't get a short
-	   read due to something intermittent such as low memory. */
-	struct dir_entry e = {0};
-	for (; dir_read_entry(inode, ofs, &e); ofs += sizeof(e)) {
-		if (!e.in_use) {
-			break;
-		}
-	}
-
-	const off_t sz = sizeof(*to_write);
-	return inode_locked_write_at(inode, to_write, sz, ofs) == sz;
-}
-
-static bool
-dir_erase_entry(struct inode *inode, off_t pos)
-{
-	inode_lock_held_by_current_thread(inode);
-
-	struct dir_entry e = {0};
-	e.in_use = false;
-
-	const off_t sz = sizeof(e);
-	return inode_locked_write_at(inode, &e, sz, pos) == sz;
 }
 
 /* Adds a file named NAME to DIR, which must not already contain a

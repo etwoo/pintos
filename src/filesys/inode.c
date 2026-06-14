@@ -209,7 +209,10 @@ inode_read_impl(ino_t ino, void *buffer, off_t size, off_t offset)
 }
 
 off_t
-inode_locked_read_at(struct inode *, void *buffer, off_t size, off_t offset)
+inode_locked_read_at(struct inode *inode,
+                     void *buffer,
+                     off_t size,
+                     off_t offset)
 {
 	lock_held_by_current_thread(&inode->lock);
 	return inode_read_impl(inode->ino, buffer, size, offset);
@@ -226,14 +229,10 @@ inode_read_at(struct inode *inode, void *buffer, off_t size, off_t offset)
 }
 
 static off_t
-inode_write_impl(ino_t ino, void *buffer, off_t size, off_t offset)
+inode_write_impl(ino_t ino, const void *buffer, off_t size, off_t offset)
 {
 	const off_t offset_begin = offset;
 	off_t bytes_written = 0;
-
-	if (deny_write) {
-		return 0;
-	}
 
 	while (size > 0) {
 		/* Sector to write, starting byte offset within sector. */
@@ -274,7 +273,7 @@ inode_write_impl(ino_t ino, void *buffer, off_t size, off_t offset)
 
 off_t
 inode_locked_write_at(struct inode *inode,
-                      void *buffer,
+                      const void *buffer,
                       off_t size,
                       off_t offset)
 {
@@ -297,6 +296,11 @@ inode_write_at(struct inode *inode,
 	const ino_t ino = inode->ino;
 	const bool deny_write = (inode->deny_write_cnt > 0);
 	lock_release(&inode->lock);
+
+	if (deny_write) {
+		return 0;
+	}
+
 	return inode_write_impl(ino, buffer, size, offset);
 }
 
@@ -352,7 +356,7 @@ inode_lock_release(struct inode *inode)
 void
 inode_lock_held_by_current_thread(struct inode *inode)
 {
-	lock_held_by_current_thread(&inode->lock):
+	lock_held_by_current_thread(&inode->lock);
 }
 
 bool
