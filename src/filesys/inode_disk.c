@@ -238,6 +238,21 @@ done:
 	return success;
 }
 
+void
+inode_disk_unlink(ino_t ino)
+{
+	const off_t length = inode_disk_to_length(ino);
+
+	for (off_t pos = 0; pos < length; pos += BLOCK_SECTOR_SIZE) {
+		block_sector_t sector = byte_to_sector(ino, pos, NULL);
+		if (sector != INODE_SECTOR_UNSET) {
+			free_map_release(sector, 1);
+		} /* else: no work to do for hole in sparse file. */
+	}
+
+	inode_map_release(ino_to_inode_disk_sector(ino), 1);
+}
+
 bool
 inode_disk_check(ino_t ino, uint32_t flags)
 {

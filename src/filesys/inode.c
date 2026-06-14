@@ -143,9 +143,7 @@ inode_close(struct inode *inode)
 	if (safe_to_free != NULL) {
 		/* Deallocate blocks if removed. */
 		if (safe_to_free->removed) {
-			// TODO: inode_map_release() for inofile slot
-			// TODO: free_map_release() for direct/indirect blocks
-			//^^^ probably related to dir-vine-persistence failure
+			inode_disk_unlink(safe_to_free->ino);
 		}
 		free(safe_to_free);
 	}
