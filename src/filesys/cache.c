@@ -111,16 +111,14 @@ cache_flush_dirty(struct cache_block *b)
 void
 cache_done(void)
 {
-	lock_acquire(&fs_cache.lock);
-
 	for (size_t i = 0; i < ARRAY_SIZE(fs_cache.blocks); ++i) {
+		lock_acquire(&fs_cache.lock);
 		struct cache_block *b = &fs_cache.blocks[i];
 		if (b->state == CACHE_DIRTY) {
 			cache_flush_dirty(b);
 		}
+		lock_release(&fs_cache.lock);
 	}
-
-	lock_release(&fs_cache.lock);
 }
 
 static struct cache_block *

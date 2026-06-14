@@ -368,6 +368,9 @@ dir_add_leaf(struct dir *dir,
 	ASSERT(dir != NULL);
 	ASSERT(name != NULL);
 
+	// TODO: hold per-inode lock across lookup, get offset, write
+	// necessary to avoid concurrent touch/mkdir clobbering each other
+
 	if (inode_is_removed(dir->inode)) {
 		/* Refuse mutations on removed directories. */
 		return false;
@@ -525,6 +528,18 @@ dir_remove_leaf(struct dir *dir, const char *name)
 
 	ASSERT(dir != NULL);
 	ASSERT(name != NULL);
+
+	// TODO: hold per-inode lock across lookup->ofs, overwrite @ofs
+	// this is important to avoid race like:
+	// 1) thread A does lookup on N, gets offset X
+	// 2) scheduler preempts A, runs thread B
+	// 3) thread B does lookup on N, gets offset X
+	// 4) thread B removes entry at offset X
+	// 5) scheduler runs thread C
+	// 6) thread C searches for first free entry, gets offset X
+	// 7) thread C adds a new entry with name N1 at offset X
+	// 8) scheduler preempts C, runs threads A
+	// 9) thread A removes entry at offset X, clobbering thread C's work
 
 	/* Find directory entry. */
 	if (!lookup(dir, name, &e, &ofs))

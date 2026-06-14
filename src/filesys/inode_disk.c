@@ -46,6 +46,12 @@ cache_read_or_alloc(block_sector_t sector, int pos, bool alloc)
 		void *zeroes = palloc_get_page(PAL_ZERO);
 		if (zeroes == NULL ||
 		    /* Update containing block to refer to allocated sector. */
+		    // TODO: need a lock around read+write (or otherwise detect
+		    // another thread already allocated into this slot), in
+		    // order to avoid concurrent writes both trying to write
+		    // into the same direct/indirect slot, resulting in some
+		    // set of blocks being marked used in the freemap while
+		    // actually being unreachable from inofile
 		    !cache_write(sector, pos, sizeof(out), &out) ||
 		    /* Initialize allocated sector to all zeroes. */
 		    !cache_write(out, 0, BLOCK_SECTOR_SIZE, zeroes)) {
