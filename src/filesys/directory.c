@@ -618,7 +618,7 @@ dir_remove_leaf(struct dir *dir, const char *name)
 		   acquired in a consistent order by all threads. */
 		inode_lock_acquire(to_remove);
 		const bool nonempty = dir_count_entries(to_remove);
-		inode_lock_acquire(to_remove);
+		inode_lock_release(to_remove);
 
 		/* Cannot remove non-empty subdirectory. */
 		if (nonempty) {
