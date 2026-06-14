@@ -187,7 +187,7 @@ dir_lookup_leaf(struct dir *dir, const char *name, struct inode **inode)
 	ASSERT(dir != NULL);
 	ASSERT(name != NULL);
 	*inode = NULL;
-	ino_t ino_leaf = 0; /* Sentinel Value. */
+	ino_t ino_leaf = UINT32_MAX;
 
 	/* See dir_add_leaf() and dir_remove_leaf(). */
 	inode_lock_acquire(dir->inode);
@@ -210,7 +210,7 @@ dir_lookup_leaf(struct dir *dir, const char *name, struct inode **inode)
 done:
 	inode_lock_release(dir->inode);
 
-	if (ino_leaf > 0) { /* See Sentinel Value comment above. */
+	if (ino_leaf != UINT32_MAX) {
 		*inode = inode_open(ino_leaf);
 	}
 
