@@ -410,8 +410,7 @@ dir_add_leaf(struct dir *dir,
 		goto done;
 	}
 
-	if ((flags & INODE_FLAG_IS_DIR) != 0 &&
-	    !is_dotdot(name) &&
+	if ((flags & INODE_FLAG_IS_DIR) != 0 && !is_dotdot(name) &&
 	    !dir_add_dotdot(ino, dir_get_inumber(dir))) {
 		goto done;
 	}
