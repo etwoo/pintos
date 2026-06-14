@@ -205,26 +205,36 @@ bool
 inode_disk_create(off_t length, uint32_t flags, ino_t *out)
 {
 	ASSERT(length >= 0);
+	*out = INODE_SECTOR_UNSET;
+	bool success = false;
 
-	struct inode_disk *i = palloc_get_page(PAL_ZERO);
-	if (i == NULL) {
-		return -1;
+	struct inode_disk *to_write = palloc_get_page(PAL_ZERO);
+	if (to_write == NULL) {
+		goto done;
 	}
-	ASSERT(sizeof(*i) <= PGSIZE);
-	ASSERT(sizeof(*i) == BLOCK_SECTOR_SIZE);
+	ASSERT(sizeof(*to_write) <= PGSIZE);
+	ASSERT(sizeof(*to_write) == BLOCK_SECTOR_SIZE);
 
-	i->length = length;
-	i->flags = flags;
-	i->magic = INODE_MAGIC;
+	to_write->length = length;
+	to_write->flags = flags;
+	to_write->magic = INODE_MAGIC;
 
 	if (!inode_map_allocate(1, out)) {
-		return false;
+		goto done;
 	}
 	ASSERT(*out < INODE_LIMIT);
 
 	const block_sector_t sector = ino_to_inode_disk_sector(*out);
-	const bool success = cache_write(sector, 0, BLOCK_SECTOR_SIZE, i);
-	palloc_free_page(i);
+	success = cache_write(sector, 0, BLOCK_SECTOR_SIZE, to_write);
+
+done:
+	if (!success && *out != INODE_SECTOR_UNSET) {
+		/* Undo partial change on failure. */
+		inode_map_release(*out, 1);
+		/* Return error to caller. */
+		*out = INODE_SECTOR_UNSET;
+	}
+	palloc_free_page(to_write);
 	return success;
 }
 

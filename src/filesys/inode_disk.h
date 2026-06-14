@@ -22,9 +22,8 @@ struct inode_disk {
 	struct inode_disk_index idx;
 	off_t length;         /* File size in bytes. */
 	uint32_t flags;       /* INODE_FLAG_* values. */
-	uint32_t refcnt;      /* TODO: Number of hardlinks to this inode. */
 	uint32_t magic;       /* Magic number. */
-	uint32_t unused[110]; /* Not used. */
+	uint32_t unused[111]; /* Not used. */
 };
 
 /* Returns the block device sector that contains byte offset POS within inode
