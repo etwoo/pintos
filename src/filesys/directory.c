@@ -540,7 +540,7 @@ dir_remove_leaf(struct dir *dir, const char *name)
 		for (size_t ofs = 0;
 		     inode_read_at(inode, &e, sizeof(e), ofs) == sizeof(e);
 		     ofs += sizeof(e)) {
-			if (e.in_use) {
+			if (e.in_use && !is_dotdot(e.name)) {
 				/* Cannot remove non-empty subdirectory. */
 				goto done;
 			}
