@@ -303,12 +303,12 @@ syscall_io(int syscall_number, struct intr_frame *f, int *stack)
 
 		total_bytes += bytes;
 	}
-#ifdef FILESYS
+
 	if (fd_to_dir(fd) != NULL) {
 		ASSERT(file == NULL);
 		total_bytes = -1;
 	}
-#endif
+
 #ifdef VM
 	page_unpin(uaddr, sz);
 #endif
@@ -389,7 +389,6 @@ syscall_munmap(struct intr_frame *f, int *stack)
 static void
 syscall_chdir(struct intr_frame *f, int *stack)
 {
-#ifdef FILESYS
 	char *path = NULL;
 	syscall_arg_peek(f, stack++, NULL, NULL, &path);
 
@@ -406,16 +405,11 @@ syscall_chdir(struct intr_frame *f, int *stack)
 	f->eax = ok ? 1 : 0; /* chdir() returns bool, not integer code */
 	file_close(file_unexpected);
 	free(path);
-#else
-	(void)stack; /* Unused. */
-	f->eax = ENOSYS;
-#endif
 }
 
 static void
 syscall_mkdir(struct intr_frame *f, int *stack)
 {
-#ifdef FILESYS
 	char *path = NULL;
 	syscall_arg_peek(f, stack++, NULL, NULL, &path);
 
@@ -423,16 +417,11 @@ syscall_mkdir(struct intr_frame *f, int *stack)
 
 	f->eax = ok ? 1 : 0; /* mkdir() returns bool, not integer code */
 	free(path);
-#else
-	(void)stack; /* Unused. */
-	f->eax = ENOSYS;
-#endif
 }
 
 static void
 syscall_readdir(struct intr_frame *f, int *stack)
 {
-#ifdef FILESYS
 	const int fd = *stack++;
 	void *uaddr = (void *)(*stack++);
 	// TODO: deal with uaddr buffer that spans two kpages
@@ -446,30 +435,20 @@ syscall_readdir(struct intr_frame *f, int *stack)
 	}
 
 	f->eax = ok ? 1 : 0; /* readdir() returns bool, not integer code */
-#else
-	(void)stack; /* Unused. */
-	f->eax = ENOSYS;
-#endif
 }
 
 static void
 syscall_isdir(struct intr_frame *f, int *stack)
 {
-#ifdef FILESYS
 	const int fd = *stack++;
 
 	const bool ok = (fd_to_dir(fd) != NULL);
 	f->eax = ok ? 1 : 0; /* isdir() returns bool, not integer code */
-#else
-	(void)stack; /* Unused. */
-	f->eax = ENOSYS;
-#endif
 }
 
 static void
 syscall_inumber(struct intr_frame *f, int *stack)
 {
-#ifdef FILESYS
 	const int fd = *stack++;
 
 	struct file *file = fd_to_file(fd);
@@ -482,10 +461,6 @@ syscall_inumber(struct intr_frame *f, int *stack)
 	} else {
 		f->eax = IO_FAIL;
 	}
-#else
-	(void)stack; /* Unused. */
-	f->eax = ENOSYS;
-#endif
 }
 
 static void
