@@ -424,13 +424,17 @@ syscall_readdir(struct intr_frame *f, int *stack)
 {
 	const int fd = *stack++;
 	void *uaddr = (void *)(*stack++);
-	// TODO: deal with uaddr buffer that spans two kpages
-	void *kaddr = check_span_is_user_vaddr(f, uaddr, NAME_MAX + 1);
 
 	struct dir *dir = fd_to_dir(fd);
 	char bounce[NAME_MAX + 1] = {0};
 	const bool ok = dir != NULL && dir_readdir(dir, bounce);
 	if (ok) {
+		/* For now, we assume the destination buffer lies entirely
+		   within a single kpage. This may not be true in the general
+		   case, especially with virtual memory configured; see
+		   syscall_io() and syscall_arg_peek() for examples of how to
+		   handle buffers (and C strings) that span multiple kpages. */
+		void *kaddr = check_span_is_user_vaddr(f, uaddr, NAME_MAX + 1);
 		memcpy(kaddr, bounce, sizeof(bounce));
 	}
 
