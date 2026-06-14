@@ -190,11 +190,13 @@ dir_lookup_leaf(struct dir *dir, const char *name, struct inode **inode)
 
 	/* See dir_add_leaf() and dir_remove_leaf(). */
 	inode_lock_acquire(dir->inode);
+	const bool is_removed = inode_locked_is_removed(dir->inode);
+	inode_lock_release(dir->inode);
 
-	if (inode_locked_is_removed(dir->inode)) {
+	if (is_removed) {
 		/* Refuse new lookups into removed directories (lookups
 		 * preceding removal remain valid). */
-		goto done;
+		return false;
 	}
 
 	/* Find requested directory entry. */
@@ -202,12 +204,10 @@ dir_lookup_leaf(struct dir *dir, const char *name, struct inode **inode)
 	for (off_t o = 0; dir_read_entry(dir->inode, o, &e); o += sizeof(e)) {
 		if (e.in_use && 0 == strcmp(name, e.name)) {
 			*inode = inode_open(e.ino);
-			goto done;
+			break;
 		}
 	}
 
-done:
-	inode_lock_release(dir->inode);
 	return *inode != NULL;
 }
 
