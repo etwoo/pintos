@@ -373,14 +373,14 @@ dir_add_leaf(struct dir *dir,
 
 	if (inode_is_removed(dir->inode)) {
 		/* Refuse mutations on removed directories. */
-		return false;
+		goto done;
 	}
 
 	/* Check NAME for validity. */
 	if (*name == '\0' ||           /* Name must be non-empty. */
 	    strlen(name) > NAME_MAX || /* Name must fit within dir_entry. */
 	    is_dot(name)) {
-		return false;
+		goto done;
 	}
 
 	/* Check that NAME is not in use. */
