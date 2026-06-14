@@ -2,6 +2,7 @@
 #define FILESYS_INODE_DISK_H
 
 #include "filesys/inode.h"
+#include "threads/synch.h"
 
 /* Maximum number of supported inodes (files). */
 extern const block_sector_t INODE_LIMIT;
@@ -28,8 +29,9 @@ struct inode_disk {
 
 /* Returns the block device sector that contains byte offset POS within inode
    with identifier INO. Returns INODE_SECTOR_UNSET if inode does not contain
-   data at offset POS. */
-block_sector_t byte_to_sector(ino_t ino, off_t pos, bool alloc);
+   data at offset POS. Performs on-demand allocation of sectors if passed a
+   non-NULL value of ALLOC. */
+block_sector_t byte_to_sector(ino_t ino, off_t pos, struct lock *alloc);
 
 bool inode_disk_create(off_t length, uint32_t flags, ino_t *out);
 bool inode_disk_check(ino_t ino, uint32_t flags);

@@ -35,36 +35,65 @@ ino_to_inode_disk_sector(ino_t ino)
 }
 
 static block_sector_t
-cache_read_or_alloc(block_sector_t sector, int pos, bool alloc)
+cache_read_or_alloc(block_sector_t sector, int pos, struct lock *alloc)
 {
+	bool success = false;
+	void *zeroes = NULL;
+
 	block_sector_t out = INODE_SECTOR_UNSET;
 	if (!cache_read(sector, pos, sizeof(out), &out)) {
 		ASSERT(out == INODE_SECTOR_UNSET);
 	}
-	if (alloc && out == INODE_SECTOR_UNSET && free_map_allocate(1, &out)) {
-		ASSERT(BLOCK_SECTOR_SIZE <= PGSIZE);
-		void *zeroes = palloc_get_page(PAL_ZERO);
-		if (zeroes == NULL ||
-		    /* Update containing block to refer to allocated sector. */
-		    // TODO: need a lock around read+write (or otherwise detect
-		    // another thread already allocated into this slot), in
-		    // order to avoid concurrent writes both trying to write
-		    // into the same direct/indirect slot, resulting in some
-		    // set of blocks being marked used in the freemap while
-		    // actually being unreachable from inofile
-		    !cache_write(sector, pos, sizeof(out), &out) ||
-		    /* Initialize allocated sector to all zeroes. */
-		    !cache_write(out, 0, BLOCK_SECTOR_SIZE, zeroes)) {
-			free_map_release(out, 1);
-			out = INODE_SECTOR_UNSET;
-		}
-		palloc_free_page(zeroes);
+
+	if (out != INODE_SECTOR_UNSET) {
+		success = true;
+		goto done;
 	}
+
+	if (alloc == NULL || !free_map_allocate(1, &out)) {
+		goto done;
+	}
+
+	ASSERT(BLOCK_SECTOR_SIZE <= PGSIZE);
+	zeroes = palloc_get_page(PAL_ZERO);
+	if (zeroes == NULL) {
+		goto done;
+	}
+
+	/* Initialize allocated sector to all zeroes. */
+	if (!cache_write(out, 0, BLOCK_SECTOR_SIZE, zeroes)) {
+		goto done;
+	}
+
+	/* Use test-and-test-and-set when updating the inofile to refer to
+	 * newly-allocated sectors. Use caller-provided, per-inode lock to
+	 * prevent concurrent writers from clobbering one another's writes and
+	 * orphaning sectors, i.e. creating marked-as-used sectors that are not
+	 * actually reachable from the inofile. */
+	lock_acquire(alloc);
+
+	block_sector_t test = INODE_SECTOR_UNSET;
+	if (cache_read(sector, pos, sizeof(test), &test) &&
+	    test == INODE_SECTOR_UNSET) {
+		/* Update inofile to refer to allocated sector. */
+		success = cache_write(sector, pos, sizeof(out), &out);
+	}
+
+	lock_release(alloc);
+
+done:
+	if (!success && out != INODE_SECTOR_UNSET) {
+		/* Undo partial change on failure. */
+		free_map_release(out, 1);
+		/* Return error to caller. */
+		out = INODE_SECTOR_UNSET;
+	}
+	palloc_free_page(zeroes);
 	return out;
 }
 
 static block_sector_t
-get_inode_disk_member(ino_t ino, size_t slot, bool alloc)
+get_inode_disk_member(ino_t ino, size_t slot, struct lock *alloc)
 {
 	const block_sector_t sector = ino_to_inode_disk_sector(ino);
 
@@ -75,7 +104,9 @@ get_inode_disk_member(ino_t ino, size_t slot, bool alloc)
 }
 
 static block_sector_t
-get_indirect_block_slot(block_sector_t indirect, off_t filepos, bool alloc)
+get_indirect_block_slot(block_sector_t indirect,
+                        off_t filepos,
+                        struct lock *alloc)
 {
 	off_t relpos = 0;
 	if (MAX_DIRECT <= filepos && filepos < MAX_INDIRECT) {
@@ -96,7 +127,7 @@ get_indirect_block_slot(block_sector_t indirect, off_t filepos, bool alloc)
 static block_sector_t
 get_indirect_2x_block_slot(block_sector_t indirect_2x,
                            off_t filepos,
-                           bool alloc)
+                           struct lock *alloc)
 {
 	ASSERT(MAX_INDIRECT <= filepos && filepos < MAX_INDIRECT_2x);
 	const off_t relpos = filepos - MAX_INDIRECT;
@@ -109,7 +140,7 @@ get_indirect_2x_block_slot(block_sector_t indirect_2x,
 }
 
 static block_sector_t
-byte_to_sector_direct(ino_t ino, off_t pos, bool alloc)
+byte_to_sector_direct(ino_t ino, off_t pos, struct lock *alloc)
 {
 	ASSERT(pos < MAX_DIRECT);
 
@@ -119,12 +150,11 @@ byte_to_sector_direct(ino_t ino, off_t pos, bool alloc)
 }
 
 static block_sector_t
-byte_to_sector_indirect(ino_t ino, off_t pos, bool alloc)
+byte_to_sector_indirect(ino_t ino, off_t pos, struct lock *alloc)
 {
 	ASSERT(MAX_DIRECT <= pos && pos < MAX_INDIRECT);
 
-	const block_sector_t indirect =
-		get_inode_disk_member(ino, 12, alloc);
+	const block_sector_t indirect = get_inode_disk_member(ino, 12, alloc);
 	if (indirect == INODE_SECTOR_UNSET) {
 		return INODE_SECTOR_UNSET;
 	}
@@ -133,7 +163,7 @@ byte_to_sector_indirect(ino_t ino, off_t pos, bool alloc)
 }
 
 static block_sector_t
-byte_to_sector_indirect_2x(ino_t ino, off_t pos, bool alloc)
+byte_to_sector_indirect_2x(ino_t ino, off_t pos, struct lock *alloc)
 {
 	ASSERT(MAX_INDIRECT <= pos && pos < MAX_INDIRECT_2x);
 
@@ -153,7 +183,7 @@ byte_to_sector_indirect_2x(ino_t ino, off_t pos, bool alloc)
 }
 
 block_sector_t
-byte_to_sector(ino_t ino, off_t pos, bool alloc)
+byte_to_sector(ino_t ino, off_t pos, struct lock *alloc)
 {
 	block_sector_t out = INODE_SECTOR_UNSET;
 	if (pos < MAX_DIRECT) {

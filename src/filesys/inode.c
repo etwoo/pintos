@@ -167,11 +167,7 @@ inode_remove(struct inode *inode)
 off_t
 inode_read_at(struct inode *inode, void *buffer, off_t size, off_t offset)
 {
-	lock_acquire(&inode->lock);
-	const ino_t ino = inode->ino;
-	lock_release(&inode->lock);
-	inode = NULL; /* Do not access struct inode after this point. */
-
+	const ino_t ino = inode_get_inumber(inode);
 	const off_t length = inode_disk_to_length(ino);
 	if (length < 0) {
 		return -1;
@@ -181,7 +177,7 @@ inode_read_at(struct inode *inode, void *buffer, off_t size, off_t offset)
 
 	while (size > 0) {
 		/* Disk sector to read, starting byte offset within sector. */
-		block_sector_t sector_idx = byte_to_sector(ino, offset, false);
+		block_sector_t sector_idx = byte_to_sector(ino, offset, NULL);
 		const bool sparse = (sector_idx == INODE_SECTOR_UNSET);
 		int sector_ofs = offset % BLOCK_SECTOR_SIZE;
 
@@ -232,7 +228,6 @@ inode_write_at(struct inode *inode,
 	const ino_t ino = inode->ino;
 	const bool deny_write = (inode->deny_write_cnt > 0);
 	lock_release(&inode->lock);
-	inode = NULL; /* Do not access struct inode after this point. */
 
 	const off_t offset_begin = offset;
 	off_t bytes_written = 0;
@@ -243,7 +238,8 @@ inode_write_at(struct inode *inode,
 
 	while (size > 0) {
 		/* Sector to write, starting byte offset within sector. */
-		block_sector_t sector_idx = byte_to_sector(ino, offset, true);
+		block_sector_t sector_idx =
+			byte_to_sector(ino, offset, &inode->lock);
 		if (sector_idx == INODE_SECTOR_UNSET) {
 			break;
 		}
@@ -270,8 +266,9 @@ inode_write_at(struct inode *inode,
 		bytes_written += chunk_size;
 	}
 
-	if (offset_begin + bytes_written > inode_disk_to_length(ino)) {
-		inode_disk_set_length(ino, offset_begin + bytes_written);
+	const off_t potential_length = offset_begin + bytes_written;
+	if (potential_length > inode_disk_to_length(ino)) {
+		inode_disk_set_length(ino, potential_length);
 	}
 	return bytes_written;
 }
