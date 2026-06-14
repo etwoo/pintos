@@ -371,15 +371,15 @@ dir_add_leaf(struct dir *dir,
 	// TODO: hold per-inode lock across lookup, get offset, write
 	// necessary to avoid concurrent touch/mkdir clobbering each other
 
-	if (inode_is_removed(dir->inode)) {
-		/* Refuse mutations on removed directories. */
-		goto done;
-	}
-
 	/* Check NAME for validity. */
 	if (*name == '\0' ||           /* Name must be non-empty. */
 	    strlen(name) > NAME_MAX || /* Name must fit within dir_entry. */
 	    is_dot(name)) {
+		goto done;
+	}
+
+	if (inode_is_removed(dir->inode)) {
+		/* Refuse mutations on removed directories. */
 		goto done;
 	}
 
