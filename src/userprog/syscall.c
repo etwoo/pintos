@@ -431,9 +431,14 @@ syscall_readdir(struct intr_frame *f, int *stack)
 	if (ok) {
 		/* For now, we assume the destination buffer lies entirely
 		   within a single kpage. This may not be true in the general
-		   case, especially with virtual memory configured; see
-		   syscall_io() and syscall_arg_peek() for examples of how to
-		   handle buffers (and C strings) that span multiple kpages. */
+		   case, especially with virtual memory configured.
+
+		   Especially if we integrate the page cache and the buffer
+		   more tightly (Pintos Project 3 and Project 4), we would
+		   likely need to stop making this assumption.
+
+		   See syscall_arg_peek() and syscall_io() for examples of how
+		   to handle buffers (and C strings) that span two kpages. */
 		void *kaddr = check_span_is_user_vaddr(f, uaddr, NAME_MAX + 1);
 		memcpy(kaddr, bounce, sizeof(bounce));
 	}
