@@ -187,25 +187,31 @@ dir_lookup_leaf(struct dir *dir, const char *name, struct inode **inode)
 	ASSERT(dir != NULL);
 	ASSERT(name != NULL);
 	*inode = NULL;
+	ino_t ino_leaf = 0; /* Sentinel Value. */
 
 	/* See dir_add_leaf() and dir_remove_leaf(). */
 	inode_lock_acquire(dir->inode);
-	const bool is_removed = inode_locked_is_removed(dir->inode);
-	inode_lock_release(dir->inode);
 
-	if (is_removed) {
+	if (inode_locked_is_removed(dir->inode)) {
 		/* Refuse new lookups into removed directories (lookups
 		 * preceding removal remain valid). */
-		return false;
+		goto done;
 	}
 
 	/* Find requested directory entry. */
 	struct dir_entry e = {0};
 	for (off_t o = 0; dir_read_entry(dir->inode, o, &e); o += sizeof(e)) {
 		if (e.in_use && 0 == strcmp(name, e.name)) {
-			*inode = inode_open(e.ino);
+			ino_leaf = e.ino;
 			break;
 		}
+	}
+
+done:
+	inode_lock_release(dir->inode);
+
+	if (ino_leaf > 0) { /* See Sentinel Value comment above. */
+		*inode = inode_open(ino_leaf);
 	}
 
 	return *inode != NULL;
@@ -457,7 +463,7 @@ done:
 	if (success &&          /* Added new dir_entry successfully. */
 	    isdir &&            /* New dir_entry is a subdirectory.  */
 	    !is_dotdot(name) && /* Subdirectory name is not ".."     */
-	    new_ino > 0 &&      /* See note on Sentinel Value above. */
+	    new_ino > 0 &&      /* See Sentinel Value comment above. */
 	    /* Add special ".." as first dir_entry in new directory. */
 	    !dir_add_dotdot(new_ino, dir_get_inumber(dir))) {
 		success = false;
@@ -651,17 +657,20 @@ dir_remove(char *path)
    NAME.  Returns true if successful, false if the directory
    contains no more entries. */
 bool
-dir_readdir(struct dir *dir, char name[NAME_MAX + 1])
+dir_readdir(struct dir *d, char name[NAME_MAX + 1])
 {
-	struct dir_entry e;
+	bool got_entry = false;
+	inode_lock_acquire(d->inode);
 
-	// TODO: should this take lock, sychronize with add/remove?
-	while (inode_read_at(dir->inode, &e, sizeof e, dir->pos) == sizeof e) {
-		dir->pos += sizeof e;
+	struct dir_entry e = {0};
+	for (; dir_read_entry(d->inode, d->pos, &e); d->pos += sizeof(e)) {
 		if (e.in_use && !is_dotdot(e.name)) {
 			strlcpy(name, e.name, NAME_MAX + 1);
-			return true;
+			got_entry = true;
+			break;
 		}
 	}
-	return false;
+
+	inode_lock_release(d->inode);
+	return got_entry;
 }
