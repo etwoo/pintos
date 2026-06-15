@@ -118,6 +118,8 @@ cache_flush_dirty(struct cache_block *b)
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
 
 	ASSERT(b->sector != CACHE_SECTOR_UNSET);
+
+	// TODO: move this work onto IO thread, that way we can relinquish the fs_cache.lock during writeback in cache_find() -- to reuse a cache entry -- so the calling thread sleeps, but other threads can still take the lock and do cache lookups on different sectors
 	block_write(fs_device, b->sector, b->data);
 
 	ASSERT(b->state == CACHE_DIRTY);
