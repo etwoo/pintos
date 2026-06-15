@@ -274,6 +274,7 @@ cache_find(block_sector_t sector, struct cache_block **cached)
 					cond_wait(&b->io_async.ready,
 					          &fs_cache.lock);
 				}
+				ASSERT(b->sector == sector); // see TODO
 				__attribute__((fallthrough));
 			case CACHE_IO_AWAIT_FIRST_USE:
 			case CACHE_CLEAN:
@@ -307,9 +308,31 @@ cache_find(block_sector_t sector, struct cache_block **cached)
 	}
 
 	ASSERT(oldest != NULL);
+	const block_sector_t oldest_before_flush = oldest->sector;
+
 	if (oldest->state == CACHE_DIRTY && !cache_flush_async(oldest)) {
 		return false;
 	}
+
+	/* TODO: looks like problem is:
+	 * 1) thread A chooses oldest cache entry C to evict in cache_find()
+	 * 2) cache entry C is dirty, so thread A calls cache_flush_async() to
+	 *    write to disk
+	 * 3) thread A enqueues IO request, yields, and releases lock
+	 * 4) thread B makes a read request, calls cache_find(), and gets cache
+	 *    hit on C being flushed, with state CACHE_IO_QUEUED
+	 * 5) thread B waits on cache entry C to transition out of
+	 *    CACHE_IO_QUEUED
+	 * 6) IO thread flushes C to disk
+	 * 7) thread A wakes and evicts cache entry C from memory, calls
+	 *    cache_block_reset(), and starts to reuse it (e.g. calls
+	 *    cache_read_async)
+	 * 8) thread B wakes on cache entry C leaving state CACHE_IO_QUEUED ->
+	 *    CACHE_CLEAN
+	 * 9) thread B now finds cache entry C has been changed to refer to a
+	 *    different sector, by thread A in step 7
+	 */
+	ASSERT(oldest_before_flush == oldest->sector);
 
 	cache_block_reset(oldest);
 	*cached = oldest;
@@ -366,24 +389,6 @@ cache_read_with_readhead(block_sector_t sector,
 		break;
 	}
 
-	/* TODO: looks like problem is:
-	 * 1) thread A chooses cache entry C to evict
-	 * 2) cache entry C is dirty, so thread A calls cache_flush_async() to
-	 *    write to disk
-	 * 3) thread A enqueues IO request, yields, and releases lock
-	 * 4) thread B makes a read request, calls cache_find(), and gets cache
-	 *    hit on C being flushed, with state CACHE_IO_QUEUED
-	 * 5) thread B waits on cache entry C to transition out of
-	 *    CACHE_IO_QUEUED
-	 * 6) IO thread flushes C to disk
-	 * 7) thread A wakes and evicts cache entry C from memory, calls
-	 *    cache_block_reset(), and starts to reuse it (e.g. calls
-	 *    cache_read_async)
-	 * 8) thread B wakes on cache entry C leaving state CACHE_IO_QUEUED ->
-	 *    CACHE_CLEAN
-	 * 9) thread B now finds cache entry C has been changed to refer to a
-	 *    different sector, by thread A in step 7
-	 */
 	ASSERT(cached->sector == sector);
 	assert_sector_pos_sz_in_range(pos, sz);
 	memcpy(buffer, cached->data + pos, sz);
