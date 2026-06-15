@@ -243,7 +243,7 @@ inode_write_impl(ino_t ino,
 		block_sector_t sector_idx =
 			byte_to_sector(ino, offset, inode_lock);
 		if (sector_idx == INODE_SECTOR_UNSET) {
-			break;
+			return -1;
 		}
 
 		int sector_ofs = offset % BLOCK_SECTOR_SIZE;
