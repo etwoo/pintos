@@ -71,7 +71,10 @@ cache_io_thread(void *aux UNUSED)
 			list_entry(e, struct cache_request, elem);
 		ASSERT(r->block->state == CACHE_READ_QUEUED);
 
+		lock_release(&fs_cache.lock);
 		block_read(fs_device, r->block->sector, r->block->data);
+		lock_acquire(&fs_cache.lock);
+
 		r->block->state = r->block->read_async.ready_state;
 		r->block->read_async.ready_state = CACHE_UNUSED;
 
