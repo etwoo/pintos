@@ -28,10 +28,16 @@ struct cache_block {
 	struct {
 		struct condition ready;
 		enum cache_block_state ready_state;
-	} read_async;
+	} io_async;
+};
+
+enum cache_request_op {
+	REQUEST_READ,
+	REQUEST_WRITE,
 };
 
 struct cache_request {
+	enum cache_request_op op;
 	struct cache_block *block;
 	struct list_elem elem;
 };
@@ -52,8 +58,8 @@ cache_block_reset(struct cache_block *b)
 	b->sector = CACHE_SECTOR_UNSET;
 	b->accessed_at = INT64_MIN;
 	memset(b->data, 0, sizeof(b->data));
-	cond_init(&b->read_async.ready);
-	b->read_async.ready_state = CACHE_UNUSED;
+	cond_init(&b->io_async.ready);
+	b->io_async.ready_state = CACHE_UNUSED;
 }
 
 static void
@@ -72,13 +78,22 @@ cache_io_thread(void *aux UNUSED)
 		ASSERT(r->block->state == CACHE_IO_QUEUED);
 
 		lock_release(&fs_cache.lock);
-		block_read(fs_device, r->block->sector, r->block->data);
+		switch (r->op) {
+		case REQUEST_READ:
+			block_read(fs_device, r->block->sector, r->block->data);
+			break;
+		case REQUEST_WRITE:
+			block_write(fs_device,
+			            r->block->sector,
+			            r->block->data);
+			break;
+		}
 		lock_acquire(&fs_cache.lock);
 
-		r->block->state = r->block->read_async.ready_state;
-		r->block->read_async.ready_state = CACHE_UNUSED;
+		r->block->state = r->block->io_async.ready_state;
+		r->block->io_async.ready_state = CACHE_UNUSED;
 
-		cond_broadcast(&r->block->read_async.ready, &fs_cache.lock);
+		cond_broadcast(&r->block->io_async.ready, &fs_cache.lock);
 
 		free(r); /* Originally allocated by cache_read_async(). */
 	}
@@ -112,66 +127,40 @@ cache_init()
 	thread_create("writeback", PRI_DEFAULT, cache_writeback_thread, NULL);
 }
 
-static void
-cache_flush_dirty(struct cache_block *b)
-{
-	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
-
-	ASSERT(b->sector != CACHE_SECTOR_UNSET);
-
-	// TODO: move this work onto IO thread, that way we can relinquish the fs_cache.lock during writeback in cache_find() -- to reuse a cache entry -- so the calling thread sleeps, but other threads can still take the lock and do cache lookups on different sectors
-	block_write(fs_device, b->sector, b->data);
-
-	ASSERT(b->state == CACHE_DIRTY);
-	b->state = CACHE_CLEAN;
-}
-
-void
-cache_done(void)
-{
-	for (size_t i = 0; i < ARRAY_SIZE(fs_cache.blocks); ++i) {
-		lock_acquire(&fs_cache.lock);
-		struct cache_block *b = &fs_cache.blocks[i];
-		if (b->state == CACHE_DIRTY) {
-			cache_flush_dirty(b);
-		}
-		lock_release(&fs_cache.lock);
-	}
-}
-
 enum read_wait_mode {
 	WAIT_FOR_DATA,
 	RETURN_AFTER_ENQUEUE,
 };
 
 static bool
-cache_read_async(block_sector_t sector,
-                 struct cache_block *to_fill,
-                 enum read_wait_mode mode)
+cache_io_async(enum cache_request_op op,
+               struct cache_block *cache,
+               enum read_wait_mode mode)
 {
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
-	ASSERT(sector < block_size(fs_device));
+	ASSERT(cache->sector < block_size(fs_device));
 
 	struct cache_request *r = malloc(sizeof(*r));
 	if (r == NULL) {
 		return false;
 	}
 
-	to_fill->state = CACHE_IO_QUEUED;
-	to_fill->sector = sector;
+	cache->state = CACHE_IO_QUEUED;
+	ASSERT(cache->sector != CACHE_SECTOR_UNSET);
 
 	switch (mode) {
 	case WAIT_FOR_DATA:
 		/* Caller waits synchronously and reads at least once. */
-		to_fill->read_async.ready_state = CACHE_IO_AWAIT_FIRST_USE;
+		cache->io_async.ready_state = CACHE_IO_AWAIT_FIRST_USE;
 		break;
 	case RETURN_AFTER_ENQUEUE:
 		/* Caller returns without reading result. */
-		to_fill->read_async.ready_state = CACHE_CLEAN;
+		cache->io_async.ready_state = CACHE_CLEAN;
 		break;
 	}
 
-	r->block = to_fill;
+	r->op = op;
+	r->block = cache;
 	list_push_back(&fs_cache.requests, &r->elem);
 
 	/* cache_io_thread() takes ownership of cache_request memory. */
@@ -181,16 +170,33 @@ cache_read_async(block_sector_t sector,
 
 	switch (mode) {
 	case WAIT_FOR_DATA:
-		while (to_fill->state == CACHE_IO_QUEUED) {
-			cond_wait(&to_fill->read_async.ready, &fs_cache.lock);
+		while (cache->state == CACHE_IO_QUEUED) {
+			cond_wait(&cache->io_async.ready, &fs_cache.lock);
 		}
-		ASSERT(to_fill->state == CACHE_IO_AWAIT_FIRST_USE);
+		ASSERT(cache->state == CACHE_IO_AWAIT_FIRST_USE);
 		break;
 	case RETURN_AFTER_ENQUEUE:
 		break;
 	}
 
 	return true;
+}
+
+static bool
+cache_read_async(block_sector_t sector,
+                 struct cache_block *to_fill,
+                 enum read_wait_mode mode)
+{
+	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
+	to_fill->sector = sector;
+	return cache_io_async(REQUEST_READ, to_fill, mode);
+}
+
+static bool
+cache_flush_async(struct cache_block *to_flush)
+{
+	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
+	return cache_io_async(REQUEST_WRITE, to_flush, WAIT_FOR_DATA);
 }
 
 static void
@@ -244,8 +250,8 @@ cache_optional_readahead(block_sector_t hint)
 	/* Do not wait for request to complete. Also ignore failure. */
 }
 
-static struct cache_block *
-cache_find(block_sector_t sector)
+static bool
+cache_find(block_sector_t sector, struct cache_block **cached)
 {
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
 
@@ -260,7 +266,7 @@ cache_find(block_sector_t sector)
 			case CACHE_IO_QUEUED:
 				/* Wait for in-flight data to be ready. */
 				while (b->state == CACHE_IO_QUEUED) {
-					cond_wait(&b->read_async.ready,
+					cond_wait(&b->io_async.ready,
 					          &fs_cache.lock);
 				}
 				__attribute__((fallthrough));
@@ -268,7 +274,8 @@ cache_find(block_sector_t sector)
 			case CACHE_CLEAN:
 			case CACHE_DIRTY:
 				/* Cache hit. Return in-memory data. */
-				return b;
+				*cached = b;
+				return true;
 			}
 		}
 	}
@@ -295,12 +302,13 @@ cache_find(block_sector_t sector)
 	}
 
 	ASSERT(oldest != NULL);
-	if (oldest->state == CACHE_DIRTY) {
-		cache_flush_dirty(oldest);
+	if (oldest->state == CACHE_DIRTY && !cache_flush_async(oldest)) {
+		return false;
 	}
 
 	cache_block_reset(oldest);
-	return oldest;
+	*cached = oldest;
+	return true;
 }
 
 static void
@@ -327,7 +335,10 @@ cache_read_with_readhead(block_sector_t sector,
 {
 	lock_acquire(&fs_cache.lock);
 
-	struct cache_block *cached = cache_find(sector);
+	struct cache_block *cached = NULL;
+	if (!cache_find(sector, &cached)) {
+		goto done;
+	}
 	ASSERT(cached != NULL);
 
 	switch (cached->state) {
@@ -367,7 +378,10 @@ cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 {
 	lock_acquire(&fs_cache.lock);
 
-	struct cache_block *cached = cache_find(sector);
+	struct cache_block *cached = NULL;
+	if (!cache_find(sector, &cached)) {
+		goto done;
+	}
 	ASSERT(cached != NULL);
 
 	switch (cached->state) {
@@ -402,4 +416,17 @@ cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 done:
 	lock_release(&fs_cache.lock);
 	return true;
+}
+
+void
+cache_done(void)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(fs_cache.blocks); ++i) {
+		lock_acquire(&fs_cache.lock);
+		struct cache_block *b = &fs_cache.blocks[i];
+		if (b->state == CACHE_DIRTY) {
+			cache_flush_async(b);
+		}
+		lock_release(&fs_cache.lock);
+	}
 }
