@@ -193,9 +193,8 @@ dir_lookup_leaf(struct dir *dir, const char *name, struct inode **inode)
 	/* See dir_add_leaf() and dir_remove_leaf(). */
 	inode_lock_acquire(dir->inode);
 
+	/* Refuse new lookups inside removed directories. */
 	if (inode_locked_is_removed(dir->inode)) {
-		/* Refuse new lookups into removed directories (lookups
-		 * preceding removal remain valid). */
 		goto done;
 	}
 
