@@ -143,8 +143,8 @@ cache_find(block_sector_t sector)
 	}
 
 	/* LRU buffer cache replacement: use precise per-buffer access data in
-	 * cache_block.accessed_at, set by cache_read() and cache_write() after
-	 * each invocation of cache_find(). */
+	   cache_block.accessed_at, set by cache_read() and cache_write() after
+	   each invocation of cache_find(). */
 	struct cache_block *oldest = NULL;
 	for (size_t i = 0; i < ARRAY_SIZE(fs_cache.blocks); ++i) {
 		struct cache_block *b = &fs_cache.blocks[i];
