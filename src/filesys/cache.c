@@ -25,8 +25,10 @@ struct cache_block {
 	block_sector_t sector;
 	int64_t accessed_at;
 	char data[BLOCK_SECTOR_SIZE];
-	struct condition data_ready;
-	enum cache_block_state data_ready_state;
+	struct {
+		struct condition ready;
+		enum cache_block_state ready_state;
+	} read_async;
 };
 
 struct cache_request {
@@ -50,8 +52,8 @@ cache_block_reset(struct cache_block *b)
 	b->sector = CACHE_SECTOR_UNSET;
 	b->accessed_at = INT64_MIN;
 	memset(b->data, 0, sizeof(b->data));
-	cond_init(&b->data_ready);
-	b->data_ready_state = CACHE_UNUSED;
+	cond_init(&b->read_async.ready);
+	b->read_async.ready_state = CACHE_UNUSED;
 }
 
 static void
@@ -70,10 +72,10 @@ cache_io_thread(void *aux UNUSED)
 		ASSERT(r->block->state == CACHE_READ_QUEUED);
 
 		block_read(fs_device, r->block->sector, r->block->data);
-		r->block->state = r->block->data_ready_state;
-		r->block->data_ready_state = CACHE_UNUSED;
+		r->block->state = r->block->read_async.ready_state;
+		r->block->read_async.ready_state = CACHE_UNUSED;
 
-		cond_broadcast(&r->block->data_ready, &fs_cache.lock);
+		cond_broadcast(&r->block->read_async.ready, &fs_cache.lock);
 
 		free(r); /* Originally allocated by cache_read_async(). */
 	}
@@ -156,11 +158,11 @@ cache_read_async(block_sector_t sector,
 	switch (mode) {
 	case WAIT_FOR_DATA:
 		/* Caller waits synchronously and reads at least once. */
-		to_fill->data_ready_state = CACHE_READ_AWAIT_FIRST_USE;
+		to_fill->read_async.ready_state = CACHE_READ_AWAIT_FIRST_USE;
 		break;
 	case RETURN_AFTER_ENQUEUE:
 		/* Caller returns without reading result. */
-		to_fill->data_ready_state = CACHE_CLEAN;
+		to_fill->read_async.ready_state = CACHE_CLEAN;
 		break;
 	}
 
@@ -175,7 +177,7 @@ cache_read_async(block_sector_t sector,
 	switch (mode) {
 	case WAIT_FOR_DATA:
 		while (to_fill->state == CACHE_READ_QUEUED) {
-			cond_wait(&to_fill->data_ready, &fs_cache.lock);
+			cond_wait(&to_fill->read_async.ready, &fs_cache.lock);
 		}
 		ASSERT(to_fill->state == CACHE_READ_AWAIT_FIRST_USE);
 		break;
@@ -253,7 +255,7 @@ cache_find(block_sector_t sector)
 			case CACHE_READ_QUEUED:
 				/* Wait for in-flight data to be ready. */
 				while (b->state == CACHE_READ_QUEUED) {
-					cond_wait(&b->data_ready,
+					cond_wait(&b->read_async.ready,
 					          &fs_cache.lock);
 				}
 				__attribute__((fallthrough));
