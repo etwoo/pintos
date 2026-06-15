@@ -12,18 +12,21 @@
 
 static const block_sector_t CACHE_SECTOR_UNSET = UINT32_MAX;
 
+enum cache_block_state {
+	CACHE_UNUSED,
+	CACHE_READ_QUEUED,
+	CACHE_READ_AWAIT_FIRST_USE,
+	CACHE_CLEAN,
+	CACHE_DIRTY,
+};
+
 struct cache_block {
-	enum {
-		CACHE_UNUSED,
-		CACHE_READ_QUEUED,
-		CACHE_READ_AWAIT_FIRST_USE,
-		CACHE_CLEAN,
-		CACHE_DIRTY,
-	} state;
+	enum cache_block_state state;
 	block_sector_t sector;
 	int64_t accessed_at;
 	char data[BLOCK_SECTOR_SIZE];
 	struct condition data_ready;
+	enum cache_block_state data_ready_state;
 };
 
 struct cache_request {
@@ -48,6 +51,7 @@ cache_block_reset(struct cache_block *b)
 	b->accessed_at = INT64_MIN;
 	memset(b->data, 0, sizeof(b->data));
 	cond_init(&b->data_ready);
+	b->data_ready_state = CACHE_UNUSED;
 }
 
 static void
@@ -66,7 +70,8 @@ cache_io_thread(void *aux UNUSED)
 		ASSERT(r->block->state == CACHE_READ_QUEUED);
 
 		block_read(fs_device, r->block->sector, r->block->data);
-		r->block->state = CACHE_READ_AWAIT_FIRST_USE;
+		r->block->state = r->block->data_ready_state;
+		r->block->data_ready_state = CACHE_UNUSED;
 
 		cond_broadcast(&r->block->data_ready, &fs_cache.lock);
 
@@ -145,20 +150,34 @@ cache_read_async(block_sector_t sector,
 		return false;
 	}
 
-	r->block = to_fill;
-	r->block->state = CACHE_READ_QUEUED;
-	r->block->sector = sector;
+	to_fill->state = CACHE_READ_QUEUED;
+	to_fill->sector = sector;
 
+	switch (mode) {
+	case WAIT_FOR_DATA:
+		/* Caller waits synchronously and reads at least once. */
+		to_fill->data_ready_state = CACHE_READ_AWAIT_FIRST_USE;
+		break;
+	case RETURN_AFTER_ENQUEUE:
+		/* Caller returns without reading result. */
+		to_fill->data_ready_state = CACHE_CLEAN;
+		break;
+	}
+
+	r->block = to_fill;
 	list_push_back(&fs_cache.requests, &r->elem);
+
 	/* cache_io_thread() takes ownership of cache_request memory. */
+	r = NULL;
 
 	cond_signal(&fs_cache.requests_pending, &fs_cache.lock);
 
 	switch (mode) {
 	case WAIT_FOR_DATA:
 		while (to_fill->state == CACHE_READ_QUEUED) {
-			cond_wait(&r->block->data_ready, &fs_cache.lock);
+			cond_wait(&to_fill->data_ready, &fs_cache.lock);
 		}
+		ASSERT(to_fill->state == CACHE_READ_AWAIT_FIRST_USE);
 		break;
 	case RETURN_AFTER_ENQUEUE:
 		break;
