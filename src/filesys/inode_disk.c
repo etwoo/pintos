@@ -71,7 +71,11 @@ cache_read_or_alloc(block_sector_t sector, int pos, struct lock *alloc)
 	   orphaning sectors, i.e. creating marked-as-used sectors that are not
 	   actually reachable from the inofile.
 
-	   Some callers already hold the lock. Hack recursive mutex for now. */
+	   Callers in directory.c like dir_add_leaf() and dir_remove_leaf()
+	   already hold the per-inode lock to guarantee higher-level atomicity,
+	   e.g. checking a directory entry with a given name does not yet exist
+	   and then adding a directory entry with that name. For these callers,
+	   we hack a recursive mutex (ish) behavior for now. */
 	bool locked = false;
 	if (!lock_held_by_current_thread(alloc)) {
 		locked = true;
