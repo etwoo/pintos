@@ -407,8 +407,8 @@ dir_add_leaf(struct dir *dir,
 	ASSERT(name != NULL);
 
 	/* Hold per-inode lock, unique per on-disk directory, to prevent TOCTOU
-	   bugs when checking for collision with an existing directory, choosing
-	   a free dir_entry, and adding the requested entry for NAME. */
+	   races while: checking for collision with an existing dir_entry,
+	   choosing a free dir_entry, and adding requested entry for NAME. */
 	inode_lock_acquire(dir->inode);
 
 	/* Refuse changes to removed directories. */
