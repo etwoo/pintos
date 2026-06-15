@@ -663,7 +663,8 @@ dir_readdir(struct dir *d, char name[NAME_MAX + 1])
 	inode_lock_acquire(d->inode);
 
 	struct dir_entry e = {0};
-	for (; dir_read_entry(d->inode, d->pos, &e); d->pos += sizeof(e)) {
+	while (dir_read_entry(d->inode, d->pos, &e)) {
+		d->pos += sizeof(e);
 		if (e.in_use && !is_dotdot(e.name)) {
 			strlcpy(name, e.name, NAME_MAX + 1);
 			got_entry = true;
