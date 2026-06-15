@@ -277,6 +277,29 @@ inode_write_impl(ino_t ino,
 
 	const off_t potential_length = offset_begin + bytes_written;
 	if (potential_length > inode_disk_to_length(ino)) {
+		/* After writing all data with cache_write(), update file
+		 * length. This controls how far inode_read_impl() will seek
+		 * into this file.
+		 *
+		 * Because the loop body above invokes byte_to_sector() before
+		 * cache_write(), there can be time windows where the inofile
+		 * contains references (direct, indirect, double indirect) to
+		 * allocated sectors that do not yet have the intended <buffer>
+		 * content written to them. By only updating the overall file
+		 * length here, we guarantee concurrent readers only seek into
+		 * newly appended file bytes once they are populated with the
+		 * intended buffer content.
+		 *
+		 * Per Pintos Project 4 guidance:
+		 *
+		 *   [...] extending a file and writing data into the
+		 *   new section must be atomic. Suppose processes A and
+		 *   B both have a given file open and both are
+		 *   positioned at end-of-file. If A reads and B writes
+		 *   the file at the same time, A may read all, part, or
+		 *   none of what B writes. However, A may not read data
+		 *   other than what B writes, e.g. if B's data is all
+		 *   nonzero bytes, A is not allowed to see any zeros. */
 		inode_disk_set_length(ino, potential_length);
 	}
 	return bytes_written;
