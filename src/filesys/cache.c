@@ -14,7 +14,8 @@ struct cache_block {
 	enum {
 		CACHE_UNUSED,
 		CACHE_READ_QUEUED,
-		CACHE_POPULATED,
+		CACHE_READ_AWAIT_FIRST_USE,
+		CACHE_CLEAN,
 		CACHE_DIRTY,
 	} state;
 	block_sector_t sector;
@@ -62,7 +63,7 @@ cache_io_thread(void *aux UNUSED)
 		ASSERT(r->block->state == CACHE_READ_QUEUED);
 
 		block_read(fs_device, r->block->sector, r->block->data);
-		r->block->state = CACHE_POPULATED;
+		r->block->state = CACHE_READ_AWAIT_FIRST_USE;
 
 		cond_signal(&r->request_done, &fs_cache.lock);
 	}
@@ -105,7 +106,7 @@ cache_flush_dirty(struct cache_block *b)
 	block_write(fs_device, b->sector, b->data);
 
 	ASSERT(b->state == CACHE_DIRTY);
-	b->state = CACHE_POPULATED;
+	b->state = CACHE_CLEAN;
 }
 
 void
@@ -134,7 +135,8 @@ cache_find(block_sector_t sector)
 			case CACHE_READ_QUEUED:
 				/* Sector matches, but data is not ready. */
 				break;
-			case CACHE_POPULATED:
+			case CACHE_READ_AWAIT_FIRST_USE:
+			case CACHE_CLEAN:
 			case CACHE_DIRTY:
 				/* Cache hit. Return in-memory data. */
 				return b;
@@ -151,11 +153,12 @@ cache_find(block_sector_t sector)
 		if (oldest == NULL || b->accessed_at < oldest->accessed_at) {
 			switch (b->state) {
 			case CACHE_UNUSED:
-			case CACHE_POPULATED:
+			case CACHE_CLEAN:
 			case CACHE_DIRTY:
 				oldest = b;
 				break;
 			case CACHE_READ_QUEUED:
+			case CACHE_READ_AWAIT_FIRST_USE:
 				/* Do not evict entry under active use. */
 				break;
 			}
@@ -214,9 +217,12 @@ cache_read(block_sector_t sector, int pos, int sz, void *buffer)
 	case CACHE_UNUSED:
 		/* Cache miss. Populate assigned cache entry. */
 		cache_read_async(sector, cached);
+		ASSERT(cached->state == CACHE_READ_AWAIT_FIRST_USE);
+		cached->state = CACHE_CLEAN;
 		break;
-	case CACHE_POPULATED:
+	case CACHE_CLEAN:
 	case CACHE_DIRTY:
+	case CACHE_READ_AWAIT_FIRST_USE:
 		/* Cache hit. Copy value to caller. */
 		break;
 	case CACHE_READ_QUEUED:
@@ -249,10 +255,12 @@ cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 			 * surrounding the target [pos, pos+sz] range, which
 			 * the caller expects to remain unchanged. */
 			cache_read_async(sector, cached);
+			ASSERT(cached->state == CACHE_READ_AWAIT_FIRST_USE);
 		}
 		break;
-	case CACHE_POPULATED:
+	case CACHE_CLEAN:
 	case CACHE_DIRTY:
+	case CACHE_READ_AWAIT_FIRST_USE:
 		/* Cache hit. Update existing value. */
 		break;
 	case CACHE_READ_QUEUED:
