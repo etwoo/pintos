@@ -29,7 +29,8 @@ struct dir_entry {
 	bool in_use;             /* In use or free? */
 };
 
-static const off_t DIRECTORY_SIZE_INIT = 16 * sizeof(struct dir_entry);
+/* Start directories with zero entries. Allocate lazily. */
+static const off_t DIRECTORY_SIZE_INIT = 0;
 
 static bool
 is_dot(const char *name)
