@@ -95,7 +95,7 @@ cache_io_thread(void *aux UNUSED)
 
 		cond_broadcast(&r->block->io_async.ready, &fs_cache.lock);
 
-		free(r); /* Originally allocated by cache_read_async(). */
+		free(r); /* Originally allocated by cache_io_async(). */
 	}
 
 	lock_release(&fs_cache.lock);
