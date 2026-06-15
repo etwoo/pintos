@@ -12,6 +12,9 @@
 struct frame {
 	tid_t owner;
 	void *upage;
+	// TODO: change tpinned to refcnt, to deal w/ overlapping pin/unpin
+	// calls, avoid two threads pinning the same frame, then one unpinning
+	// earlier and clobbering the later thread's (expected) remaining pin
 	bool pinned;
 	struct list_elem elem;
 };
