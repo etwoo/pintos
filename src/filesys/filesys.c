@@ -71,8 +71,8 @@ filesys_open(char *path)
 	}
 
 	if (dir != NULL) {
-		/* Caller expected a directory at <path>, but
-		   a regular file is present there instead. */
+		/* Caller expected a regular file at <path>, but a directory
+		   is present there instead. Clean up, and return an error. */
 		dir_close(dir);
 		dir = NULL;
 		ASSERT(file == NULL);
