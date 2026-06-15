@@ -14,8 +14,8 @@ static const block_sector_t CACHE_SECTOR_UNSET = UINT32_MAX;
 
 enum cache_block_state {
 	CACHE_UNUSED,
-	CACHE_READ_QUEUED,
-	CACHE_READ_AWAIT_FIRST_USE,
+	CACHE_IO_QUEUED,
+	CACHE_IO_AWAIT_FIRST_USE,
 	CACHE_CLEAN,
 	CACHE_DIRTY,
 };
@@ -69,7 +69,7 @@ cache_io_thread(void *aux UNUSED)
 		struct list_elem *e = list_pop_front(&fs_cache.requests);
 		struct cache_request *r =
 			list_entry(e, struct cache_request, elem);
-		ASSERT(r->block->state == CACHE_READ_QUEUED);
+		ASSERT(r->block->state == CACHE_IO_QUEUED);
 
 		lock_release(&fs_cache.lock);
 		block_read(fs_device, r->block->sector, r->block->data);
@@ -157,13 +157,13 @@ cache_read_async(block_sector_t sector,
 		return false;
 	}
 
-	to_fill->state = CACHE_READ_QUEUED;
+	to_fill->state = CACHE_IO_QUEUED;
 	to_fill->sector = sector;
 
 	switch (mode) {
 	case WAIT_FOR_DATA:
 		/* Caller waits synchronously and reads at least once. */
-		to_fill->read_async.ready_state = CACHE_READ_AWAIT_FIRST_USE;
+		to_fill->read_async.ready_state = CACHE_IO_AWAIT_FIRST_USE;
 		break;
 	case RETURN_AFTER_ENQUEUE:
 		/* Caller returns without reading result. */
@@ -181,10 +181,10 @@ cache_read_async(block_sector_t sector,
 
 	switch (mode) {
 	case WAIT_FOR_DATA:
-		while (to_fill->state == CACHE_READ_QUEUED) {
+		while (to_fill->state == CACHE_IO_QUEUED) {
 			cond_wait(&to_fill->read_async.ready, &fs_cache.lock);
 		}
-		ASSERT(to_fill->state == CACHE_READ_AWAIT_FIRST_USE);
+		ASSERT(to_fill->state == CACHE_IO_AWAIT_FIRST_USE);
 		break;
 	case RETURN_AFTER_ENQUEUE:
 		break;
@@ -207,8 +207,8 @@ cache_optional_readahead(block_sector_t hint)
 		if (b->sector == hint) {
 			/* Cache already contains entry for readahead hint.
 			   Even a cache entry not ready to serve reads, like
-			   one in state CACHE_READ_QUEUED, means dispatching
-			   a new read request would be counterproductive. */
+			   one in state CACHE_IO_QUEUED, means dispatching a
+			   new read request would be counterproductive. */
 			return;
 		}
 	}
@@ -224,8 +224,8 @@ cache_optional_readahead(block_sector_t hint)
 				break;
 			case CACHE_DIRTY:
 				/* Do not trigger writeback. */
-			case CACHE_READ_QUEUED:
-			case CACHE_READ_AWAIT_FIRST_USE:
+			case CACHE_IO_QUEUED:
+			case CACHE_IO_AWAIT_FIRST_USE:
 				/* Do not evict entry under active use. */
 				break;
 			}
@@ -257,14 +257,14 @@ cache_find(block_sector_t sector)
 				/* Unused cache entries should always have
 				   sector unset. Ignore for now. */
 				break;
-			case CACHE_READ_QUEUED:
+			case CACHE_IO_QUEUED:
 				/* Wait for in-flight data to be ready. */
-				while (b->state == CACHE_READ_QUEUED) {
+				while (b->state == CACHE_IO_QUEUED) {
 					cond_wait(&b->read_async.ready,
 					          &fs_cache.lock);
 				}
 				__attribute__((fallthrough));
-			case CACHE_READ_AWAIT_FIRST_USE:
+			case CACHE_IO_AWAIT_FIRST_USE:
 			case CACHE_CLEAN:
 			case CACHE_DIRTY:
 				/* Cache hit. Return in-memory data. */
@@ -286,8 +286,8 @@ cache_find(block_sector_t sector)
 			case CACHE_DIRTY:
 				oldest = b;
 				break;
-			case CACHE_READ_QUEUED:
-			case CACHE_READ_AWAIT_FIRST_USE:
+			case CACHE_IO_QUEUED:
+			case CACHE_IO_AWAIT_FIRST_USE:
 				/* Do not evict entry under active use. */
 				break;
 			}
@@ -336,15 +336,15 @@ cache_read_with_readhead(block_sector_t sector,
 		if (!cache_read_async(sector, cached, WAIT_FOR_DATA)) {
 			goto done;
 		}
-		ASSERT(cached->state == CACHE_READ_AWAIT_FIRST_USE);
+		ASSERT(cached->state == CACHE_IO_AWAIT_FIRST_USE);
 		cached->state = CACHE_CLEAN;
 		break;
 	case CACHE_CLEAN:
 	case CACHE_DIRTY:
-	case CACHE_READ_AWAIT_FIRST_USE:
+	case CACHE_IO_AWAIT_FIRST_USE:
 		/* Cache hit. Copy value to caller. */
 		break;
-	case CACHE_READ_QUEUED:
+	case CACHE_IO_QUEUED:
 		/* cache_find() should never return entries in this state. */
 		NOT_REACHED();
 		break;
@@ -379,15 +379,15 @@ cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 			if (!cache_read_async(sector, cached, WAIT_FOR_DATA)) {
 				goto done;
 			}
-			ASSERT(cached->state == CACHE_READ_AWAIT_FIRST_USE);
+			ASSERT(cached->state == CACHE_IO_AWAIT_FIRST_USE);
 		}
 		break;
 	case CACHE_CLEAN:
 	case CACHE_DIRTY:
-	case CACHE_READ_AWAIT_FIRST_USE:
+	case CACHE_IO_AWAIT_FIRST_USE:
 		/* Cache hit. Update existing value. */
 		break;
-	case CACHE_READ_QUEUED:
+	case CACHE_IO_QUEUED:
 		/* cache_find() should never return entries in this state. */
 		NOT_REACHED();
 		break;
