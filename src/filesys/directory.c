@@ -354,16 +354,6 @@ done:
 	return success;
 }
 
-static struct dir *
-get_cwd(void)
-{
-	struct thread *t = thread_current();
-	if (t->fs.cwd == NULL) {
-		t->fs.cwd = dir_open_root();
-	}
-	return t->fs.cwd;
-}
-
 bool
 dir_lookup(char *path, struct file **file, struct dir **dir)
 {
@@ -380,7 +370,7 @@ dir_lookup(char *path, struct file **file, struct dir **dir)
 		*dir = dir_open_root();
 		ok = (*dir != NULL);
 	} else if (is_cwd) {
-		struct dir *cwd = get_cwd();
+		struct dir *cwd = thread_get_cwd();
 		inode_lock_acquire(cwd->inode);
 		const bool is_removed = inode_locked_is_removed(cwd->inode);
 		inode_lock_release(cwd->inode);
@@ -389,7 +379,7 @@ dir_lookup(char *path, struct file **file, struct dir **dir)
 		}
 		ok = (*dir != NULL);
 	} else {
-		struct dir *cwd = get_cwd();
+		struct dir *cwd = thread_get_cwd();
 		ok = dir_lookup_impl(cwd, &path_parts, is_absolute, file, dir);
 	}
 
@@ -499,7 +489,7 @@ dir_leaf_action(char *path,
 	leaf_elem = list_pop_back(&path_parts);
 
 	file_unexpected = NULL;
-	if (!dir_lookup_impl(get_cwd(),
+	if (!dir_lookup_impl(thread_get_cwd(),
 	                     &path_parts,
 	                     is_absolute,
 	                     &file_unexpected,

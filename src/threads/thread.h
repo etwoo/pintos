@@ -191,4 +191,7 @@ enum thread_page {
 };
 enum thread_page thread_page_is_accessed_test_and_set(tid_t tid, void *upage);
 
+struct dir *thread_get_cwd(void);
+void thread_reset_cwd(struct dir *cwd); /* Takes ownership. */
+
 #endif /* threads/thread.h */

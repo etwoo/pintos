@@ -207,12 +207,13 @@ thread_create(const char *name, int priority, thread_func *function, void *aux)
 	init_thread(t, name, priority);
 	tid = t->tid = allocate_tid();
 	t->wait.allowed_parent = thread_tid();
-	{
-		struct thread *parent = thread_current();
-		if (parent->fs.cwd != NULL) {
-			t->fs.cwd = dir_reopen(parent->fs.cwd);
-		}
+#ifdef FILESYS
+	struct thread *acting_parent = thread_current();
+	if (acting_parent->fs.cwd != NULL) {
+		/* Child inherits current working directory from parent. */
+		t->fs.cwd = dir_reopen(acting_parent->fs.cwd);
 	}
+#endif
 
 	/* Stack frame for kernel_thread(). */
 	kf = alloc_frame(t, sizeof *kf);
@@ -331,12 +332,8 @@ thread_exit(int status)
 	process_exit(status);
 #endif
 #ifdef FILESYS
-	{
-		/* Close directory descriptor for current working directory. */
-		struct thread *t = thread_current();
-		dir_close(t->fs.cwd);
-		t->fs.cwd = NULL;
-	}
+	/* Close directory descriptor for current working directory. */
+	thread_reset_cwd(NULL);
 #endif
 
 	/* Remove thread from all threads list, set our status to dying,
@@ -980,6 +977,28 @@ thread_page_is_accessed_test_and_set(tid_t tid, void *upage)
 	} else {
 		return THREAD_PAGE_NOT_ACCESSED;
 	}
+}
+
+#endif
+
+#ifdef FILESYS
+
+struct dir *
+thread_get_cwd(void)
+{
+	struct thread *t = thread_current();
+	if (t->fs.cwd == NULL) {
+		t->fs.cwd = dir_open_root();
+	}
+	return t->fs.cwd;
+}
+
+void
+thread_reset_cwd(struct dir *cwd)
+{
+	struct thread *t = thread_current();
+	dir_close(t->fs.cwd);
+	t->fs.cwd = cwd;
 }
 
 #endif
