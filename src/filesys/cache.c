@@ -128,7 +128,8 @@ cache_init()
 }
 
 enum read_wait_mode {
-	WAIT_FOR_DATA,
+	WAIT_FOR_READ,
+	WAIT_FOR_WRITE,
 	RETURN_AFTER_ENQUEUE,
 };
 
@@ -149,12 +150,16 @@ cache_io_async(enum cache_request_op op,
 	ASSERT(cache->sector != CACHE_SECTOR_UNSET);
 
 	switch (mode) {
-	case WAIT_FOR_DATA:
+	case WAIT_FOR_READ:
 		/* Caller waits synchronously and reads at least once. */
 		cache->io_async.ready_state = CACHE_IO_AWAIT_FIRST_USE;
 		break;
+	case WAIT_FOR_WRITE:
+		/* Caller waits synchronously but does not read. */
+		cache->io_async.ready_state = CACHE_CLEAN;
+		break;
 	case RETURN_AFTER_ENQUEUE:
-		/* Caller returns without reading result. */
+		/* Caller returns before operation completes. */
 		cache->io_async.ready_state = CACHE_CLEAN;
 		break;
 	}
@@ -169,11 +174,11 @@ cache_io_async(enum cache_request_op op,
 	cond_signal(&fs_cache.requests_pending, &fs_cache.lock);
 
 	switch (mode) {
-	case WAIT_FOR_DATA:
+	case WAIT_FOR_READ:
+	case WAIT_FOR_WRITE:
 		while (cache->state == CACHE_IO_QUEUED) {
 			cond_wait(&cache->io_async.ready, &fs_cache.lock);
 		}
-		ASSERT(cache->state == CACHE_IO_AWAIT_FIRST_USE);
 		break;
 	case RETURN_AFTER_ENQUEUE:
 		break;
@@ -196,7 +201,7 @@ static bool
 cache_flush_async(struct cache_block *to_flush)
 {
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
-	return cache_io_async(REQUEST_WRITE, to_flush, WAIT_FOR_DATA);
+	return cache_io_async(REQUEST_WRITE, to_flush, WAIT_FOR_WRITE);
 }
 
 static void
@@ -344,7 +349,7 @@ cache_read_with_readhead(block_sector_t sector,
 	switch (cached->state) {
 	case CACHE_UNUSED:
 		/* Cache miss. Populate assigned cache entry. */
-		if (!cache_read_async(sector, cached, WAIT_FOR_DATA)) {
+		if (!cache_read_async(sector, cached, WAIT_FOR_READ)) {
 			goto done;
 		}
 		ASSERT(cached->state == CACHE_IO_AWAIT_FIRST_USE);
@@ -390,7 +395,7 @@ cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 			/* Cache miss on partial write. Read existing values
 			 * surrounding the target [pos, pos+sz] range, which
 			 * the caller expects to remain unchanged. */
-			if (!cache_read_async(sector, cached, WAIT_FOR_DATA)) {
+			if (!cache_read_async(sector, cached, WAIT_FOR_READ)) {
 				goto done;
 			}
 			ASSERT(cached->state == CACHE_IO_AWAIT_FIRST_USE);
