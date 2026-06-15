@@ -12,6 +12,8 @@
 
 #include <string.h>
 
+#define MIN(x, y) ((x) < (y) ? (x) : (y))
+
 static const int PAGE_DESCRIPTOR_ERROR = -1;
 static const int MMAP_ID_UNSET = -2;
 
@@ -100,8 +102,12 @@ page_evict_prepare(struct thread *t, struct hash_elem *e_, void **kpage_stolen)
 		ASSERT(entry->rw == PAGE_WRITABLE);
 		struct file *file = fd_to_file(entry->file.fd);
 		ASSERT(file != NULL);
-		off_t b = file_write_at(file, kpage, PGSIZE, entry->file.pos);
-		ASSERT(b == PGSIZE || b + entry->file.pos == file_length(file));
+		const off_t length = file_length(file);
+		ASSERT(length > entry->file.pos);
+		const off_t bytes_to_eof = length - entry->file.pos;
+		const off_t sz = MIN(bytes_to_eof, PGSIZE);
+		const off_t b = file_write_at(file, kpage, sz, entry->file.pos);
+		ASSERT(b == sz);
 	}
 
 	if (!complete_teardown && entry->type == PAGE_ANONYMOUS) {
