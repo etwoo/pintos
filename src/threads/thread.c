@@ -207,6 +207,12 @@ thread_create(const char *name, int priority, thread_func *function, void *aux)
 	init_thread(t, name, priority);
 	tid = t->tid = allocate_tid();
 	t->wait.allowed_parent = thread_tid();
+	{
+		struct thread *parent = thread_current();
+		if (parent->fs.cwd != NULL) {
+			t->fs.cwd = dir_reopen(parent->fs.cwd);
+		}
+	}
 
 	/* Stack frame for kernel_thread(). */
 	kf = alloc_frame(t, sizeof *kf);
@@ -323,6 +329,14 @@ thread_exit(int status)
 
 #ifdef USERPROG
 	process_exit(status);
+#endif
+#ifdef FILESYS
+	{
+		/* Close directory descriptor for current working directory. */
+		struct thread *t = thread_current();
+		dir_close(t->fs.cwd);
+		t->fs.cwd = NULL;
+	}
 #endif
 
 	/* Remove thread from all threads list, set our status to dying,

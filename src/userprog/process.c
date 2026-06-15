@@ -260,10 +260,6 @@ process_exit(int status)
 		free(twc);
 	}
 	lock_release(&cur->wait.lock);
-
-	/* Release open directory descriptor for current working directory. */
-	dir_close(cur->fs.cwd);
-	cur->fs.cwd = NULL;
 }
 
 /* Sets up the CPU for running user code in the current
