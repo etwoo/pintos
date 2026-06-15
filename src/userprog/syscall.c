@@ -349,11 +349,14 @@ syscall_close(struct intr_frame *f, int *stack)
 	const int fd = *stack++;
 
 	struct file *file = fd_to_file(fd);
-	if (file == NULL) {
+	struct dir *dir = fd_to_dir(fd);
+
+	if (file == NULL && dir == NULL) {
 		f->eax = IO_FAIL;
 	} else {
 		fd_unregister(fd);
-		file_close(file);
+		file_close(file); /* Handles NULL. */
+		dir_close(dir);   /* Handles NULL. */
 		f->eax = IO_SUCCESS;
 	}
 }
