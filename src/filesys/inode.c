@@ -169,10 +169,14 @@ inode_read_impl(ino_t ino, void *buffer, off_t size, off_t offset)
 	}
 
 	off_t bytes_read = 0;
+	block_sector_t next = INODE_SECTOR_UNSET;
 
 	while (size > 0) {
 		/* Disk sector to read, starting byte offset within sector. */
-		block_sector_t sector_idx = byte_to_sector(ino, offset, NULL);
+		const block_sector_t sector_idx =
+			(next != INODE_SECTOR_UNSET)
+				? next
+				: byte_to_sector(ino, offset, NULL);
 		const bool sparse = (sector_idx == INODE_SECTOR_UNSET);
 		int sector_ofs = offset % BLOCK_SECTOR_SIZE;
 
@@ -188,14 +192,17 @@ inode_read_impl(ino_t ino, void *buffer, off_t size, off_t offset)
 		if (chunk_size <= 0)
 			break;
 
+		next = byte_to_sector(ino, offset + chunk_size, NULL);
+
 		/* Read sector (or chunk within sector) via buffer cache. */
 		if (sparse) {
 			/* Return all-zero values from hole in sparse file. */
 			memset(buffer + bytes_read, 0, chunk_size);
-		} else if (!cache_read(sector_idx,
-		                       sector_ofs,
-		                       chunk_size,
-		                       buffer + bytes_read)) {
+		} else if (!cache_read_with_readhead(sector_idx,
+		                                     sector_ofs,
+		                                     chunk_size,
+		                                     buffer + bytes_read,
+		                                     next)) {
 			break;
 		}
 

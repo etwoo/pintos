@@ -2,6 +2,8 @@
 
 #include "devices/timer.h"
 #include "filesys/filesys.h"
+#include "filesys/inode_disk.h" /* for INODE_SECTOR_UNSET */
+#include "threads/malloc.h"
 #include "threads/thread.h"
 
 #include <array.h>
@@ -21,11 +23,11 @@ struct cache_block {
 	block_sector_t sector;
 	int64_t accessed_at;
 	char data[BLOCK_SECTOR_SIZE];
+	struct condition data_ready;
 };
 
 struct cache_request {
 	struct cache_block *block;
-	struct condition request_done;
 	struct list_elem elem;
 };
 
@@ -45,6 +47,7 @@ cache_block_reset(struct cache_block *b)
 	b->sector = CACHE_SECTOR_UNSET;
 	b->accessed_at = INT64_MIN;
 	memset(b->data, 0, sizeof(b->data));
+	cond_init(&b->data_ready);
 }
 
 static void
@@ -65,7 +68,9 @@ cache_io_thread(void *aux UNUSED)
 		block_read(fs_device, r->block->sector, r->block->data);
 		r->block->state = CACHE_READ_AWAIT_FIRST_USE;
 
-		cond_signal(&r->request_done, &fs_cache.lock);
+		cond_broadcast(&r->block->data_ready, &fs_cache.lock);
+
+		free(r); /* Originally allocated by cache_read_async(). */
 	}
 
 	lock_release(&fs_cache.lock);
@@ -122,6 +127,97 @@ cache_done(void)
 	}
 }
 
+enum read_wait_mode {
+	WAIT_FOR_DATA,
+	RETURN_AFTER_ENQUEUE,
+};
+
+static bool
+cache_read_async(block_sector_t sector,
+                 struct cache_block *to_fill,
+                 enum read_wait_mode mode)
+{
+	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
+	ASSERT(sector < block_size(fs_device));
+
+	struct cache_request *r = malloc(sizeof(*r));
+	if (r == NULL) {
+		return false;
+	}
+
+	r->block = to_fill;
+	r->block->state = CACHE_READ_QUEUED;
+	r->block->sector = sector;
+
+	list_push_back(&fs_cache.requests, &r->elem);
+	/* cache_io_thread() takes ownership of cache_request memory. */
+
+	cond_signal(&fs_cache.requests_pending, &fs_cache.lock);
+
+	switch (mode) {
+	case WAIT_FOR_DATA:
+		while (to_fill->state == CACHE_READ_QUEUED) {
+			cond_wait(&r->block->data_ready, &fs_cache.lock);
+		}
+		break;
+	case RETURN_AFTER_ENQUEUE:
+		break;
+	}
+
+	return true;
+}
+
+static void
+cache_optional_readahead(block_sector_t hint)
+{
+	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
+
+	if (hint == INODE_SECTOR_UNSET) {
+		return;
+	}
+
+	for (size_t i = 0; i < ARRAY_SIZE(fs_cache.blocks); ++i) {
+		struct cache_block *b = &fs_cache.blocks[i];
+		if (b->sector == hint) {
+			/* Cache already contains entry for readahead hint.
+			   Even a cache entry not ready to serve reads, like
+			   one in state CACHE_READ_QUEUED, means dispatching
+			   a new read request would be counterproductive. */
+			return;
+		}
+	}
+
+	struct cache_block *oldest = NULL;
+	for (size_t i = 0; i < ARRAY_SIZE(fs_cache.blocks); ++i) {
+		struct cache_block *b = &fs_cache.blocks[i];
+		if (oldest == NULL || b->accessed_at < oldest->accessed_at) {
+			switch (b->state) {
+			case CACHE_UNUSED:
+			case CACHE_CLEAN:
+				oldest = b;
+				break;
+			case CACHE_DIRTY:
+				/* Do not trigger writeback. */
+			case CACHE_READ_QUEUED:
+			case CACHE_READ_AWAIT_FIRST_USE:
+				/* Do not evict entry under active use. */
+				break;
+			}
+		}
+	}
+
+	if (oldest == NULL) {
+		/* No cache space eligible for readahead. */
+		return;
+	}
+
+	ASSERT(oldest->state == CACHE_UNUSED || oldest->state == CACHE_CLEAN);
+	cache_block_reset(oldest);
+
+	cache_read_async(hint, oldest, RETURN_AFTER_ENQUEUE);
+	/* Do not wait for request to complete. Also ignore failure. */
+}
+
 static struct cache_block *
 cache_find(block_sector_t sector)
 {
@@ -132,9 +228,16 @@ cache_find(block_sector_t sector)
 		if (b->sector == sector) {
 			switch (b->state) {
 			case CACHE_UNUSED:
-			case CACHE_READ_QUEUED:
-				/* Sector matches, but data is not ready. */
+				/* Unused cache entries should always have
+				   sector unset. Ignore for now. */
 				break;
+			case CACHE_READ_QUEUED:
+				/* Wait for in-flight data to be ready. */
+				while (b->state == CACHE_READ_QUEUED) {
+					cond_wait(&b->data_ready,
+					          &fs_cache.lock);
+				}
+				__attribute__((fallthrough));
 			case CACHE_READ_AWAIT_FIRST_USE:
 			case CACHE_CLEAN:
 			case CACHE_DIRTY:
@@ -175,28 +278,6 @@ cache_find(block_sector_t sector)
 }
 
 static void
-cache_read_async(block_sector_t sector, struct cache_block *to_fill)
-{
-	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
-	ASSERT(sector < block_size(fs_device));
-
-	struct cache_request r;
-	cond_init(&r.request_done);
-
-	r.block = to_fill;
-	r.block->state = CACHE_READ_QUEUED;
-	r.block->sector = sector;
-
-	list_push_back(&fs_cache.requests, &r.elem);
-
-	cond_signal(&fs_cache.requests_pending, &fs_cache.lock);
-
-	while (r.block->state == CACHE_READ_QUEUED) {
-		cond_wait(&r.request_done, &fs_cache.lock);
-	}
-}
-
-static void
 assert_sector_pos_sz_in_range(int pos, int sz)
 {
 	ASSERT(0 <= pos && pos <= BLOCK_SECTOR_SIZE);
@@ -204,9 +285,19 @@ assert_sector_pos_sz_in_range(int pos, int sz)
 	ASSERT(pos + sz <= BLOCK_SECTOR_SIZE);
 }
 
-// TODO: async readhead on sector+1
 bool
 cache_read(block_sector_t sector, int pos, int sz, void *buffer)
+{
+	const block_sector_t no_readahead = INODE_SECTOR_UNSET;
+	return cache_read_with_readhead(sector, pos, sz, buffer, no_readahead);
+}
+
+bool
+cache_read_with_readhead(block_sector_t sector,
+                         int pos,
+                         int sz,
+                         void *buffer,
+                         block_sector_t hint)
 {
 	lock_acquire(&fs_cache.lock);
 
@@ -216,7 +307,9 @@ cache_read(block_sector_t sector, int pos, int sz, void *buffer)
 	switch (cached->state) {
 	case CACHE_UNUSED:
 		/* Cache miss. Populate assigned cache entry. */
-		cache_read_async(sector, cached);
+		if (!cache_read_async(sector, cached, WAIT_FOR_DATA)) {
+			goto done;
+		}
 		ASSERT(cached->state == CACHE_READ_AWAIT_FIRST_USE);
 		cached->state = CACHE_CLEAN;
 		break;
@@ -236,6 +329,9 @@ cache_read(block_sector_t sector, int pos, int sz, void *buffer)
 	memcpy(buffer, cached->data + pos, sz);
 	cached->accessed_at = timer_ticks();
 
+	cache_optional_readahead(hint);
+
+done:
 	lock_release(&fs_cache.lock);
 	return true;
 }
@@ -254,7 +350,9 @@ cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 			/* Cache miss on partial write. Read existing values
 			 * surrounding the target [pos, pos+sz] range, which
 			 * the caller expects to remain unchanged. */
-			cache_read_async(sector, cached);
+			if (!cache_read_async(sector, cached, WAIT_FOR_DATA)) {
+				goto done;
+			}
 			ASSERT(cached->state == CACHE_READ_AWAIT_FIRST_USE);
 		}
 		break;
@@ -275,6 +373,7 @@ cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 	memcpy(cached->data + pos, buffer, sz);
 	cached->accessed_at = timer_ticks();
 
+done:
 	lock_release(&fs_cache.lock);
 	return true;
 }
