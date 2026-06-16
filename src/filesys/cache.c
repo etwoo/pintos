@@ -70,18 +70,21 @@ cache_block_reset(struct cache_block *b)
 static bool
 cache_block_has_references(struct cache_block *b)
 {
+	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
 	return b->io_async.awaiting > 0;
 }
 
 static void
 cache_block_add_reference(struct cache_block *b)
 {
+	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
 	b->io_async.awaiting++;
 }
 
 static void
 cache_block_drop_reference(struct cache_block *b, enum cache_block_state state)
 {
+	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
 	ASSERT(b->io_async.awaiting > 0);
 	if (--b->io_async.awaiting == 0) {
 		b->state = state;
@@ -92,6 +95,8 @@ cache_block_drop_reference(struct cache_block *b, enum cache_block_state state)
 static void
 cache_block_wait_for_io(struct cache_block *b)
 {
+	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
+
 	/* Acquire reference. */
 	cache_block_add_reference(b);
 
@@ -108,6 +113,8 @@ cache_block_wait_for_io(struct cache_block *b)
 static void
 cache_block_drain(struct cache_block *b)
 {
+	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
+
 	/* Verify this buffer will not serve new IO requests. */
 	ASSERT(b->sector == CACHE_SECTOR_UNSET);
 
