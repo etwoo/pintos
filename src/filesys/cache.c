@@ -319,17 +319,25 @@ cache_block_drop_reference(struct cache_block *b,
 }
 
 static void
-cache_block_drain(struct cache_block *b, bool add_reference)
+cache_block_wait_for_io(struct cache_block *b)
+{
+	/* Acquire reference. */
+	b->io_async.awaiting++;
+
+	/* Wait for cache_block to transition out of CACHE_IO_QUEUED. */
+	while (b->state == CACHE_IO_QUEUED) {
+		cond_wait(&b->io_async.ready, &fs_cache.lock);
+	}
+
+	/* Drop reference, while still preparing for an awaiting caller who
+	   will perform at least one read from this cache_block. */
+	cache_block_drop_reference(b, CACHE_IO_AWAIT_FIRST_USE, CACHE_UNUSED);
+}
+
+static void
+cache_block_drain(struct cache_block *b)
 {
 	const block_sector_t sector_start = b->sector;
-
-	if (add_reference) {
-		b->io_async.ready_state = CACHE_IO_AWAIT_FIRST_USE;
-		b->io_async.awaiting++;
-		while (b->state == CACHE_IO_QUEUED) {
-			cond_wait(&b->io_async.ready, &fs_cache.lock);
-		}
-	}
 
 	cache_block_drop_reference(b, b->io_async.ready_state, CACHE_UNUSED);
 
@@ -356,7 +364,8 @@ cache_find(block_sector_t sector, struct cache_block **cached)
 				break;
 			case CACHE_IO_QUEUED:
 				/* Wait for in-flight data to be ready. */
-				cache_block_drain(b, true);
+				cache_block_wait_for_io(b);
+				ASSERT(b->state != CACHE_IO_QUEUED);
 				*cached = b;
 				return true;
 			case CACHE_IO_AWAIT_FIRST_USE:
@@ -401,7 +410,7 @@ cache_find(block_sector_t sector, struct cache_block **cached)
 		if (!cache_prepare_drain_teardown_async(oldest)) {
 			return false;
 		}
-		cache_block_drain(oldest, false);
+		cache_block_drain(oldest);
 	}
 
 	cache_block_reset(oldest);
