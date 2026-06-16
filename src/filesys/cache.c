@@ -439,6 +439,7 @@ cache_read_with_readhead(block_sector_t sector,
 	}
 	ASSERT(cached != NULL);
 
+	bool got_reference = false;
 	switch (cached->state) {
 	case CACHE_UNUSED:
 		/* Cache miss. Populate assigned cache entry. */
@@ -447,7 +448,7 @@ cache_read_with_readhead(block_sector_t sector,
 		                      CACHE_IO_AWAIT_FIRST_USE)) {
 			goto done;
 		}
-		cache_block_drop_reference(cached, CACHE_CLEAN, CACHE_UNUSED); // TODO: move lower in func
+		got_reference = true;
 		break;
 	case CACHE_CLEAN:
 	case CACHE_DIRTY:
@@ -465,6 +466,9 @@ cache_read_with_readhead(block_sector_t sector,
 	memcpy(buffer, cached->data + pos, sz);
 	cached->accessed_at = timer_ticks();
 
+	if (got_reference) {
+		cache_block_drop_reference(cached, CACHE_CLEAN, CACHE_UNUSED);
+	}
 	cache_optional_readahead(hint);
 
 done:
