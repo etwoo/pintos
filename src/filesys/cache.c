@@ -340,15 +340,16 @@ cache_optional_readahead(block_sector_t hint)
 	struct cache_block *oldest = NULL;
 	for (size_t i = 0; i < ARRAY_SIZE(fs_cache.blocks); ++i) {
 		struct cache_block *b = &fs_cache.blocks[i];
+		if (cache_block_has_references(b)) {
+			/* Do not evict buffer with outstanding references,
+			   e.g. waiting readers or concurrent eviction. */
+			continue;
+		}
 		if (oldest == NULL || b->accessed_at < oldest->accessed_at) {
 			switch (b->state) {
 			case CACHE_UNUSED:
 			case CACHE_CLEAN:
-				/* Do not evict cache_block with outstanding
-				   references (i.e. waiting readers). */
-				if (!cache_block_has_references(b)) {
-					oldest = b;
-				}
+				oldest = b;
 				break;
 			case CACHE_DIRTY:
 				/* Do not trigger writeback. */
@@ -404,16 +405,17 @@ cache_find(block_sector_t sector, struct cache_block **cached)
 	struct cache_block *oldest = NULL;
 	for (size_t i = 0; i < ARRAY_SIZE(fs_cache.blocks); ++i) {
 		struct cache_block *b = &fs_cache.blocks[i];
+		if (cache_block_has_references(b)) {
+			/* Do not evict buffer with outstanding references,
+			   e.g. waiting readers or concurrent eviction. */
+			continue;
+		}
 		if (oldest == NULL || b->accessed_at < oldest->accessed_at) {
 			switch (b->state) {
 			case CACHE_UNUSED:
 			case CACHE_CLEAN:
 			case CACHE_DIRTY:
-				/* Do not evict cache_block with outstanding
-				   references (i.e. waiting readers). */
-				if (!cache_block_has_references(b)) {
-					oldest = b;
-				}
+				oldest = b;
 				break;
 			case CACHE_IO_QUEUED:
 				/* Do not evict entry under active use. */
