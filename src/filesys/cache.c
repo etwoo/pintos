@@ -11,6 +11,7 @@
 #include <string.h>
 
 static const block_sector_t CACHE_SECTOR_UNSET = UINT32_MAX;
+static const int64_t READAHEAD_EVICTION_MINIMUM = TIMER_FREQ / 20; /* ~50ms */
 
 enum cache_block_state {
 	CACHE_UNUSED,
@@ -361,6 +362,12 @@ cache_optional_readahead(block_sector_t hint)
 
 	if (oldest == NULL) {
 		/* No cache space eligible for readahead. */
+		return;
+	}
+
+	if (timer_elapsed(oldest->accessed_at) < READAHEAD_EVICTION_MINIMUM) {
+		/* Oldest eligible buffer is too young to be evicted for
+		   optional, speculative readahead work. */
 		return;
 	}
 
