@@ -79,7 +79,6 @@ cache_block_add_reference(struct cache_block *b)
 	b->io_async.awaiting++;
 }
 
-// TODO: reconsider parameters here, state transition logic more generally
 static void
 cache_block_drop_reference(struct cache_block *b, enum cache_block_state state)
 {
