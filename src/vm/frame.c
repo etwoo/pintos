@@ -12,10 +12,7 @@
 struct frame {
 	tid_t owner;
 	void *upage;
-	// TODO: change tpinned to refcnt, to deal w/ overlapping pin/unpin
-	// calls, avoid two threads pinning the same frame, then one unpinning
-	// earlier and clobbering the later thread's (expected) remaining pin
-	bool pinned;
+	int pinned;
 	struct list_elem elem;
 };
 
@@ -52,7 +49,7 @@ frame_get_page_maybe_swap(enum palloc_flags flags)
 		for (; e != list_end(&ft.table); e = list_next(e)) {
 			struct frame *candidate =
 				list_entry(e, struct frame, elem);
-			if (candidate->pinned) {
+			if (candidate->pinned > 0) {
 				continue;
 			}
 
@@ -111,7 +108,7 @@ frame_get_page(void *upage,
 
 	fr->owner = t->tid;
 	fr->upage = upage;
-	fr->pinned = false;
+	fr->pinned = 0;
 
 	const bool writable = (rw == PAGE_WRITABLE);
 	if (!fill_page(kpage, aux) ||
@@ -129,7 +126,7 @@ frame_get_page(void *upage,
 }
 
 static void
-frame_pin_set(tid_t tid, void *uaddr, size_t sz, bool to_pin)
+frame_pin_set(tid_t tid, void *uaddr, size_t sz, int to_pin)
 {
 	lock_acquire(&ft.lock);
 
@@ -141,11 +138,11 @@ frame_pin_set(tid_t tid, void *uaddr, size_t sz, bool to_pin)
 		for (; e != list_end(&ft.table); e = list_next(e)) {
 			struct frame *maybe = list_entry(e, struct frame, elem);
 			if (maybe->owner == tid && maybe->upage == cursor) {
-				maybe->pinned = to_pin;
+				maybe->pinned += to_pin;
 				break;
 			}
 		}
-		if (to_pin && e == list_end(&ft.table)) {
+		if (to_pin > 0 && e == list_end(&ft.table)) {
 			ASSERT(0 && "No frame to pin; already swapped out?");
 		}
 	}
@@ -156,13 +153,13 @@ frame_pin_set(tid_t tid, void *uaddr, size_t sz, bool to_pin)
 void
 frame_pin(tid_t tid, void *uaddr, size_t sz)
 {
-	frame_pin_set(tid, uaddr, sz, /* to_pin */ true);
+	frame_pin_set(tid, uaddr, sz, /* increment pinned count */ 1);
 }
 
 void
 frame_unpin(tid_t tid, void *uaddr, size_t sz)
 {
-	frame_pin_set(tid, uaddr, sz, /* to_pin */ false);
+	frame_pin_set(tid, uaddr, sz, /* decrement pinned count */ -1);
 }
 
 void
