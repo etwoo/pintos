@@ -221,11 +221,14 @@ cache_read_async(block_sector_t sector,
 }
 
 static bool
-cache_flush_async_and_claim_atomically(struct cache_block *to_flush)
+cache_prepare_drain_teardown_async(struct cache_block *to_flush)
 {
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
 	const block_sector_t sector_extra = to_flush->sector;
-	to_flush->sector = CACHE_SECTOR_UNSET; /* Deny new IO for this block. */
+
+	/* Deny new IO for this block. Caller may now cache_block_drain(). */
+	to_flush->sector = CACHE_SECTOR_UNSET;
+
 	return cache_io_async(REQUEST_DRAIN_AND_TEARDOWN,
 	                      to_flush,
 	                      sector_extra,
@@ -400,7 +403,7 @@ cache_find(block_sector_t sector, struct cache_block **cached)
 	ASSERT(oldest != NULL);
 
 	if (oldest->state == CACHE_DIRTY) {
-		if (!cache_flush_async_and_claim_atomically(oldest)) {
+		if (!cache_prepare_drain_teardown_async(oldest)) {
 			return false;
 		}
 		cache_block_drain(oldest, false);
