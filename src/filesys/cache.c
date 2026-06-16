@@ -304,13 +304,16 @@ cache_optional_readahead(block_sector_t hint)
 	/* Do not wait for request to complete. Also ignore failure. */
 }
 
+// TODO: reconsider parameters here, state transition logic more generally
 static void
-cache_block_drop_reference(struct cache_block *b)
+cache_block_drop_reference(struct cache_block *b,
+                           enum cache_block_state state,
+                           enum cache_block_state ready_state)
 {
 	ASSERT(b->io_async.awaiting > 0);
 	if (--b->io_async.awaiting == 0) {
-		b->state = b->io_async.ready_state;
-		b->io_async.ready_state = CACHE_UNUSED;
+		b->state = state;
+		b->io_async.ready_state = ready_state;
 		cond_signal(&b->io_async.ready, &fs_cache.lock);
 	}
 }
@@ -328,7 +331,7 @@ cache_block_drain(struct cache_block *b, bool add_reference)
 		}
 	}
 
-	cache_block_drop_reference(b);
+	cache_block_drop_reference(b, b->io_async.ready_state, CACHE_UNUSED);
 
 	while (b->state == CACHE_IO_QUEUED || b->io_async.awaiting > 0) {
 		cond_wait(&b->io_async.ready, &fs_cache.lock);
@@ -444,7 +447,7 @@ cache_read_with_readhead(block_sector_t sector,
 		                      CACHE_IO_AWAIT_FIRST_USE)) {
 			goto done;
 		}
-		cache_block_drop_reference(cached); // TODO: move lower in func
+		cache_block_drop_reference(cached, CACHE_CLEAN, CACHE_UNUSED); // TODO: move lower in func
 		break;
 	case CACHE_CLEAN:
 	case CACHE_DIRTY:
