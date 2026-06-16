@@ -528,8 +528,8 @@ cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 	case CACHE_UNUSED:
 		if (sz < BLOCK_SECTOR_SIZE) {
 			/* Cache miss on partial write. Read existing values
-			 * surrounding the target [pos, pos+sz] range, which
-			 * the caller expects to remain unchanged. */
+			   surrounding the target [pos, pos+sz] range, which
+			   the caller expects to remain unchanged. */
 			if (!cache_read_async(sector, cached, ONE_WAITER)) {
 				goto done;
 			}
