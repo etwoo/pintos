@@ -423,7 +423,13 @@ cache_find(block_sector_t sector, struct cache_block **cached)
 			}
 		}
 	}
-	ASSERT(oldest != NULL);
+
+	/* Failure to find a buffer to evict is possible and could be handled
+	   by returning false (callers already need to handle this function
+	   being fallible). However, this practically tends to happen due to
+	   bugs inside this module; asserting here improves the chances of
+	   failing close to the real issue and thereby easing debugging. */
+	ASSERT(oldest != NULL && "LRU found no eligible buffers to evict");
 
 	if (oldest->state == CACHE_DIRTY) {
 		if (!cache_prepare_drain_teardown_async(oldest)) {
