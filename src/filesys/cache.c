@@ -165,19 +165,12 @@ cache_init()
 	thread_create("writeback", PRI_DEFAULT, cache_writeback_thread, NULL);
 }
 
-// TODO: maybe rm this enum, callers specify state transition explicitly?
-enum read_wait_mode {
-	WAIT_FOR_READ,
-	WAIT_FOR_WRITE,
-	WAIT_AND_CLAIM,
-	RETURN_AFTER_ENQUEUE,
-};
-
 static bool
 cache_io_async(enum cache_request_op op,
                struct cache_block *cache,
-               enum read_wait_mode mode,
-               block_sector_t sector_extra)
+               block_sector_t sector_extra,
+               enum cache_block_state ready_state,
+               bool wait_until_ready)
 {
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
 
@@ -195,24 +188,7 @@ cache_io_async(enum cache_request_op op,
 		ASSERT(cache->sector < block_size(fs_device));
 	}
 
-	switch (mode) {
-	case WAIT_FOR_READ:
-		/* Caller waits synchronously and reads at least once. */
-		cache->io_async.ready_state = CACHE_IO_AWAIT_FIRST_USE;
-		break;
-	case WAIT_FOR_WRITE:
-		/* Caller waits synchronously but does not read. */
-		cache->io_async.ready_state = CACHE_CLEAN;
-		break;
-	case WAIT_AND_CLAIM:
-		// TODO: refactor mode argument
-		cache->io_async.ready_state = CACHE_IO_AWAIT_FIRST_USE;
-		break;
-	case RETURN_AFTER_ENQUEUE:
-		/* Caller returns before operation completes. */
-		cache->io_async.ready_state = CACHE_CLEAN;
-		break;
-	}
+	cache->io_async.ready_state = ready_state;
 
 	r->op = op;
 	r->sector_extra = sector_extra;
@@ -224,29 +200,24 @@ cache_io_async(enum cache_request_op op,
 
 	cond_signal(&fs_cache.requests_pending, &fs_cache.lock);
 
-	switch (mode) {
-	case WAIT_FOR_READ:
-	case WAIT_FOR_WRITE:
-	case WAIT_AND_CLAIM:
-		while (cache->state == CACHE_IO_QUEUED) {
-			cond_wait(&cache->io_async.ready, &fs_cache.lock);
-		}
-		break;
-	case RETURN_AFTER_ENQUEUE:
-		break;
+	while (wait_until_ready && cache->state == CACHE_IO_QUEUED) {
+		cond_wait(&cache->io_async.ready, &fs_cache.lock);
 	}
-
 	return true;
 }
 
 static bool
 cache_read_async(block_sector_t sector,
                  struct cache_block *to_fill,
-                 enum read_wait_mode mode)
+                 enum cache_block_state ready_state)
 {
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
 	to_fill->sector = sector;
-	return cache_io_async(REQUEST_READ, to_fill, mode, CACHE_SECTOR_UNSET);
+	return cache_io_async(REQUEST_READ,
+	                      to_fill,
+	                      CACHE_SECTOR_UNSET,
+	                      ready_state,
+	                      /* wait_until_ready */ true);
 }
 
 static bool
@@ -257,8 +228,9 @@ cache_flush_async_and_claim_atomically(struct cache_block *to_flush)
 	to_flush->sector = CACHE_SECTOR_UNSET; /* Deny new IO for this block. */
 	return cache_io_async(REQUEST_DRAIN_AND_TEARDOWN,
 	                      to_flush,
-	                      WAIT_AND_CLAIM,
-	                      sector_extra);
+	                      sector_extra,
+	                      CACHE_IO_AWAIT_FIRST_USE,
+	                      /* wait_until_ready */ true);
 }
 
 static bool
@@ -267,8 +239,9 @@ cache_flush_async(struct cache_block *to_flush)
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
 	return cache_io_async(REQUEST_WRITE,
 	                      to_flush,
-	                      WAIT_FOR_WRITE,
-	                      CACHE_SECTOR_UNSET);
+	                      CACHE_SECTOR_UNSET,
+	                      CACHE_CLEAN,
+	                      /* wait_until_ready */ true);
 }
 
 static void
@@ -324,7 +297,7 @@ cache_optional_readahead(block_sector_t hint)
 	}
 
 	cache_block_reset(oldest);
-	cache_read_async(hint, oldest, RETURN_AFTER_ENQUEUE);
+	cache_read_async(hint, oldest, CACHE_CLEAN);
 	/* Do not wait for request to complete. Also ignore failure. */
 }
 
@@ -471,7 +444,9 @@ cache_read_with_readhead(block_sector_t sector,
 	switch (cached->state) {
 	case CACHE_UNUSED:
 		/* Cache miss. Populate assigned cache entry. */
-		if (!cache_read_async(sector, cached, WAIT_FOR_READ)) {
+		if (!cache_read_async(sector,
+		                      cached,
+		                      CACHE_IO_AWAIT_FIRST_USE)) {
 			goto done;
 		}
 		cache_block_drop_reference(cached); // TODO: move lower in func
@@ -516,7 +491,9 @@ cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 			/* Cache miss on partial write. Read existing values
 			 * surrounding the target [pos, pos+sz] range, which
 			 * the caller expects to remain unchanged. */
-			if (!cache_read_async(sector, cached, WAIT_FOR_READ)) {
+			if (!cache_read_async(sector,
+			                      cached,
+			                      CACHE_IO_AWAIT_FIRST_USE)) {
 				goto done;
 			}
 			cache_block_drain(cached, false);
