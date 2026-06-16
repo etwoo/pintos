@@ -265,7 +265,10 @@ static bool
 cache_flush_async(struct cache_block *to_flush)
 {
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
-	return cache_io_async(REQUEST_WRITE, to_flush, WAIT_FOR_WRITE, CACHE_SECTOR_UNSET);
+	return cache_io_async(REQUEST_WRITE,
+	                      to_flush,
+	                      WAIT_FOR_WRITE,
+	                      CACHE_SECTOR_UNSET);
 }
 
 static void
@@ -334,8 +337,7 @@ cache_block_drain(struct cache_block *b, bool add_reference)
 		b->io_async.ready_state = CACHE_IO_AWAIT_FIRST_USE;
 		b->io_async.awaiting++;
 		while (b->state == CACHE_IO_QUEUED) {
-			cond_wait(&b->io_async.ready,
-				  &fs_cache.lock);
+			cond_wait(&b->io_async.ready, &fs_cache.lock);
 		}
 	}
 
