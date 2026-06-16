@@ -108,7 +108,7 @@ fsutil_extract(char **argv UNUSED)
 			      sector - 1,
 			      error);
 		/* Cast away const. Known safe because as_const refers to
-		 * mutable memory backed by <header>. */
+		   mutable memory backed by <header>. */
 		file_name = (char *)as_const;
 
 		if (type == USTAR_EOF) {

@@ -64,7 +64,7 @@ map_write(struct serializable_bitmap *sb)
 	bool ok = true;
 
 	/* Blit structure to disk. Would be better to deal with endianness and
-	 * generally make serialization more portable. Live with it for now. */
+	   generally make serialization more portable. Live with it for now. */
 	for (block_sector_t i = 0; i < sb->sector_count; ++i) {
 		/* It is probably safe to access the memory of underlying
 		   bitmap elements without taking a lock because bitmap
