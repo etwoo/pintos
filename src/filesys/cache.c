@@ -318,8 +318,6 @@ cache_flush_async(struct cache_block *to_flush)
 static void
 cache_optional_readahead(block_sector_t hint)
 {
-	return; // TODO: reenable readahead
-
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
 
 	if (hint == INODE_SECTOR_UNSET) {
