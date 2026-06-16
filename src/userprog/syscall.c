@@ -118,7 +118,7 @@ syscall_arg_peek(struct intr_frame *f,
 		spans[0].len = end - kaddr;
 	} else {
 		/* The remainder of this page lacks this string's null
-		 * terminator. Search the next page (in uaddr space). */
+		   terminator. Search the next page (in uaddr space). */
 		spans[0].str = kaddr;
 		spans[0].len = span_limit;
 

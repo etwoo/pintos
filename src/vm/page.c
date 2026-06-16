@@ -307,8 +307,8 @@ fill_on_page_fault(void *kpage, void *aux)
 		bytes = file_read_at(file, kpage, PGSIZE, p->file.pos);
 		if (bytes < 0) {
 			/* No good way to handle I/O failure when caller
-			 * depends on content to be faulted into memory. Stop
-			 * and teardown the calling thread. */
+			   depends on content to be faulted into memory. Stop
+			   and teardown the calling thread. */
 			thread_exit(EXIT_EXCEPTION);
 		}
 		if (bytes < PGSIZE) {

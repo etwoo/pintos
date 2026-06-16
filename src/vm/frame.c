@@ -54,8 +54,8 @@ frame_get_page_maybe_swap(enum palloc_flags flags)
 			}
 
 			/* Checking each frame like this means O(N*M) runtime,
-			 * where N == # of frames, M == # of threads because
-			 * thread lookup requires linear scan of all_list. */
+			   where N == # of frames, M == # of threads because
+			   thread lookup requires linear scan of all_list. */
 			switch (thread_page_is_accessed_test_and_set(
 				candidate->owner,
 				candidate->upage)) {
