@@ -68,6 +68,63 @@ cache_block_reset(struct cache_block *b)
 	b->io_async.ready_state = CACHE_UNUSED;
 }
 
+static bool
+cache_block_has_references(struct cache_block *b)
+{
+	return b->io_async.awaiting > 0;
+}
+
+static void
+cache_block_add_reference(struct cache_block *b)
+{
+	b->io_async.awaiting++;
+}
+
+// TODO: reconsider parameters here, state transition logic more generally
+static void
+cache_block_drop_reference(struct cache_block *b,
+                           enum cache_block_state state,
+                           enum cache_block_state ready_state)
+{
+	ASSERT(b->io_async.awaiting > 0);
+	if (--b->io_async.awaiting == 0) {
+		b->state = state;
+		b->io_async.ready_state = ready_state;
+		cond_signal(&b->io_async.ready, &fs_cache.lock);
+	}
+}
+
+static void
+cache_block_wait_for_io(struct cache_block *b)
+{
+	/* Acquire reference. */
+	cache_block_add_reference(b);
+
+	/* Wait for cache_block to transition out of CACHE_IO_QUEUED. */
+	while (b->state == CACHE_IO_QUEUED) {
+		cond_wait(&b->io_async.ready, &fs_cache.lock);
+	}
+
+	/* Drop reference, while still preparing for a waiting caller
+	   who will perform at least one read from this cache_block. */
+	cache_block_drop_reference(b, CACHE_IO_AWAIT_FIRST_USE, CACHE_UNUSED);
+}
+
+static void
+cache_block_drain(struct cache_block *b)
+{
+	const block_sector_t sector_start = b->sector;
+
+	cache_block_drop_reference(b, b->io_async.ready_state, CACHE_UNUSED);
+
+	while (b->state == CACHE_IO_QUEUED || cache_block_has_references(b)) {
+		cond_wait(&b->io_async.ready, &fs_cache.lock);
+	}
+
+	/* Verify buffer was not reused behind our backs. */
+	ASSERT(b->sector == sector_start || b->sector == CACHE_SECTOR_UNSET);
+}
+
 static void
 cache_io_thread(void *aux UNUSED)
 {
@@ -127,7 +184,7 @@ cache_io_thread(void *aux UNUSED)
 			/* Awaiting caller requested to keep this cache_block
 			   alive (i.e. prevent eviction) until at least one
 			   read from the cache can complete. */
-			r->block->io_async.awaiting++;
+			cache_block_add_reference(r->block);
 		}
 		r->block->io_async.ready_state = CACHE_UNUSED;
 
@@ -276,11 +333,9 @@ cache_optional_readahead(block_sector_t hint)
 			switch (b->state) {
 			case CACHE_UNUSED:
 			case CACHE_CLEAN:
-				// TODO: fix readahead logic re: draining,
-				// maybe check b->sector == INODE_SECTOR_UNSET?
-				// or only check awaiting, not list_empty()?
-				if (list_empty(&b->io_async.ready.waiters) &&
-				    b->io_async.awaiting == 0) {
+				/* Do not evict cache_block with outstanding
+				   references (i.e. waiting readers). */
+				if (!cache_block_has_references(b)) {
 					oldest = b;
 				}
 				break;
@@ -302,51 +357,6 @@ cache_optional_readahead(block_sector_t hint)
 	cache_block_reset(oldest);
 	cache_read_async(hint, oldest, CACHE_CLEAN);
 	/* Do not wait for request to complete. Also ignore failure. */
-}
-
-// TODO: reconsider parameters here, state transition logic more generally
-static void
-cache_block_drop_reference(struct cache_block *b,
-                           enum cache_block_state state,
-                           enum cache_block_state ready_state)
-{
-	ASSERT(b->io_async.awaiting > 0);
-	if (--b->io_async.awaiting == 0) {
-		b->state = state;
-		b->io_async.ready_state = ready_state;
-		cond_signal(&b->io_async.ready, &fs_cache.lock);
-	}
-}
-
-static void
-cache_block_wait_for_io(struct cache_block *b)
-{
-	/* Acquire reference. */
-	b->io_async.awaiting++;
-
-	/* Wait for cache_block to transition out of CACHE_IO_QUEUED. */
-	while (b->state == CACHE_IO_QUEUED) {
-		cond_wait(&b->io_async.ready, &fs_cache.lock);
-	}
-
-	/* Drop reference, while still preparing for an awaiting caller who
-	   will perform at least one read from this cache_block. */
-	cache_block_drop_reference(b, CACHE_IO_AWAIT_FIRST_USE, CACHE_UNUSED);
-}
-
-static void
-cache_block_drain(struct cache_block *b)
-{
-	const block_sector_t sector_start = b->sector;
-
-	cache_block_drop_reference(b, b->io_async.ready_state, CACHE_UNUSED);
-
-	while (b->state == CACHE_IO_QUEUED || b->io_async.awaiting > 0) {
-		cond_wait(&b->io_async.ready, &fs_cache.lock);
-	}
-
-	/* Verify buffer was not reused behind our backs. */
-	ASSERT(b->sector == sector_start || b->sector == CACHE_SECTOR_UNSET);
 }
 
 static bool
@@ -389,11 +399,9 @@ cache_find(block_sector_t sector, struct cache_block **cached)
 			case CACHE_UNUSED:
 			case CACHE_CLEAN:
 			case CACHE_DIRTY:
-				// TODO: fix eviction logic re: draining,
-				// maybe check b->sector == INODE_SECTOR_UNSET?
-				// or only check awaiting, not list_empty()?
-				if (list_empty(&b->io_async.ready.waiters) &&
-				    b->io_async.awaiting == 0) {
+				/* Do not evict cache_block with outstanding
+				   references (i.e. waiting readers). */
+				if (!cache_block_has_references(b)) {
 					oldest = b;
 				}
 				break;
