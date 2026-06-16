@@ -26,6 +26,7 @@ struct cache_block {
 	int64_t accessed_at;
 	char data[BLOCK_SECTOR_SIZE];
 	struct {
+		int awaiting;
 		struct condition ready;
 		enum cache_block_state ready_state;
 	} io_async;
@@ -34,10 +35,12 @@ struct cache_block {
 enum cache_request_op {
 	REQUEST_READ,
 	REQUEST_WRITE,
+	REQUEST_DRAIN_AND_TEARDOWN,
 };
 
 struct cache_request {
 	enum cache_request_op op;
+	block_sector_t sector_extra;
 	struct cache_block *block;
 	struct list_elem elem;
 };
@@ -54,6 +57,9 @@ static struct cache fs_cache;
 static void
 cache_block_reset(struct cache_block *b)
 {
+	ASSERT(b->state == CACHE_UNUSED || b->state == CACHE_CLEAN);
+	ASSERT(b->io_async.awaiting == 0);
+
 	b->state = CACHE_UNUSED;
 	b->sector = CACHE_SECTOR_UNSET;
 	b->accessed_at = INT64_MIN;
@@ -77,20 +83,52 @@ cache_io_thread(void *aux UNUSED)
 			list_entry(e, struct cache_request, elem);
 		ASSERT(r->block->state == CACHE_IO_QUEUED);
 
+		/* Choose target sector (before releasing cache lock). */
+		block_sector_t sector = r->block->sector;
+		if (r->op == REQUEST_DRAIN_AND_TEARDOWN) {
+			ASSERT(r->block->sector == CACHE_SECTOR_UNSET);
+			ASSERT(r->sector_extra != CACHE_SECTOR_UNSET);
+			/* Drain and teardown requests store target sector
+			   out-of-band. Concurrent cache lookups thus see a
+			   cache_block with sector == CACHE_SECTOR_UNSET and do
+			   not interpret as a potential cache hit. In other
+			   words, unsetting cache_block.sector denies new I/O
+			   requests against this cache block, ensuring forward
+			   progress on drain and teardown. */
+			sector = r->sector_extra;
+		}
+
+		/* Release cache lock while performing block I/O to avoid
+		   blocking concurrent cache lookups that can otherwise be
+		   satisfied purely in-memory. */
 		lock_release(&fs_cache.lock);
+
 		switch (r->op) {
 		case REQUEST_READ:
-			block_read(fs_device, r->block->sector, r->block->data);
+			block_read(fs_device, sector, r->block->data);
 			break;
 		case REQUEST_WRITE:
-			block_write(fs_device,
-			            r->block->sector,
-			            r->block->data);
+		case REQUEST_DRAIN_AND_TEARDOWN:
+			block_write(fs_device, sector, r->block->data);
 			break;
 		}
+
 		lock_acquire(&fs_cache.lock);
 
+		if (r->op == REQUEST_DRAIN_AND_TEARDOWN) {
+			ASSERT(r->block->sector == CACHE_SECTOR_UNSET);
+		} else {
+			/* Verify buffer was not reused behind our backs. */
+			ASSERT(r->block->sector == sector);
+		}
+
 		r->block->state = r->block->io_async.ready_state;
+		if (r->block->state == CACHE_IO_AWAIT_FIRST_USE) {
+			/* Awaiting caller requested to keep this cache_block
+			   alive (i.e. prevent eviction) until at least one
+			   read from the cache can complete. */
+			r->block->io_async.awaiting++;
+		}
 		r->block->io_async.ready_state = CACHE_UNUSED;
 
 		cond_broadcast(&r->block->io_async.ready, &fs_cache.lock);
@@ -127,19 +165,21 @@ cache_init()
 	thread_create("writeback", PRI_DEFAULT, cache_writeback_thread, NULL);
 }
 
+// TODO: maybe rm this enum, callers specify state transition explicitly?
 enum read_wait_mode {
 	WAIT_FOR_READ,
 	WAIT_FOR_WRITE,
+	WAIT_AND_CLAIM,
 	RETURN_AFTER_ENQUEUE,
 };
 
 static bool
 cache_io_async(enum cache_request_op op,
                struct cache_block *cache,
-               enum read_wait_mode mode)
+               enum read_wait_mode mode,
+               block_sector_t sector_extra)
 {
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
-	ASSERT(cache->sector < block_size(fs_device));
 
 	struct cache_request *r = malloc(sizeof(*r));
 	if (r == NULL) {
@@ -147,7 +187,13 @@ cache_io_async(enum cache_request_op op,
 	}
 
 	cache->state = CACHE_IO_QUEUED;
-	ASSERT(cache->sector != CACHE_SECTOR_UNSET);
+	if (sector_extra != CACHE_SECTOR_UNSET) {
+		ASSERT(cache->sector == CACHE_SECTOR_UNSET);
+		ASSERT(sector_extra < block_size(fs_device));
+	} else {
+		ASSERT(cache->sector != CACHE_SECTOR_UNSET);
+		ASSERT(cache->sector < block_size(fs_device));
+	}
 
 	switch (mode) {
 	case WAIT_FOR_READ:
@@ -158,6 +204,10 @@ cache_io_async(enum cache_request_op op,
 		/* Caller waits synchronously but does not read. */
 		cache->io_async.ready_state = CACHE_CLEAN;
 		break;
+	case WAIT_AND_CLAIM:
+		// TODO: refactor mode argument
+		cache->io_async.ready_state = CACHE_IO_AWAIT_FIRST_USE;
+		break;
 	case RETURN_AFTER_ENQUEUE:
 		/* Caller returns before operation completes. */
 		cache->io_async.ready_state = CACHE_CLEAN;
@@ -165,6 +215,7 @@ cache_io_async(enum cache_request_op op,
 	}
 
 	r->op = op;
+	r->sector_extra = sector_extra;
 	r->block = cache;
 	list_push_back(&fs_cache.requests, &r->elem);
 
@@ -176,6 +227,7 @@ cache_io_async(enum cache_request_op op,
 	switch (mode) {
 	case WAIT_FOR_READ:
 	case WAIT_FOR_WRITE:
+	case WAIT_AND_CLAIM:
 		while (cache->state == CACHE_IO_QUEUED) {
 			cond_wait(&cache->io_async.ready, &fs_cache.lock);
 		}
@@ -194,19 +246,33 @@ cache_read_async(block_sector_t sector,
 {
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
 	to_fill->sector = sector;
-	return cache_io_async(REQUEST_READ, to_fill, mode);
+	return cache_io_async(REQUEST_READ, to_fill, mode, CACHE_SECTOR_UNSET);
+}
+
+static bool
+cache_flush_async_and_claim_atomically(struct cache_block *to_flush)
+{
+	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
+	const block_sector_t sector_extra = to_flush->sector;
+	to_flush->sector = CACHE_SECTOR_UNSET; /* Deny new IO for this block. */
+	return cache_io_async(REQUEST_DRAIN_AND_TEARDOWN,
+	                      to_flush,
+	                      WAIT_AND_CLAIM,
+	                      sector_extra);
 }
 
 static bool
 cache_flush_async(struct cache_block *to_flush)
 {
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
-	return cache_io_async(REQUEST_WRITE, to_flush, WAIT_FOR_WRITE);
+	return cache_io_async(REQUEST_WRITE, to_flush, WAIT_FOR_WRITE, CACHE_SECTOR_UNSET);
 }
 
 static void
 cache_optional_readahead(block_sector_t hint)
 {
+	return; // TODO: reenable readahead
+
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
 
 	if (hint == INODE_SECTOR_UNSET) {
@@ -231,7 +297,13 @@ cache_optional_readahead(block_sector_t hint)
 			switch (b->state) {
 			case CACHE_UNUSED:
 			case CACHE_CLEAN:
-				oldest = b;
+				// TODO: fix readahead logic re: draining,
+				// maybe check b->sector == INODE_SECTOR_UNSET?
+				// or only check awaiting, not list_empty()?
+				if (list_empty(&b->io_async.ready.waiters) &&
+				    b->io_async.awaiting == 0) {
+					oldest = b;
+				}
 				break;
 			case CACHE_DIRTY:
 				/* Do not trigger writeback. */
@@ -248,11 +320,52 @@ cache_optional_readahead(block_sector_t hint)
 		return;
 	}
 
-	ASSERT(oldest->state == CACHE_UNUSED || oldest->state == CACHE_CLEAN);
 	cache_block_reset(oldest);
-
 	cache_read_async(hint, oldest, RETURN_AFTER_ENQUEUE);
 	/* Do not wait for request to complete. Also ignore failure. */
+}
+
+static void
+cache_block_drain(struct cache_block *b, bool add_reference)
+{
+	const block_sector_t sector_start = b->sector;
+
+	if (add_reference) {
+		b->io_async.ready_state = CACHE_IO_AWAIT_FIRST_USE;
+		b->io_async.awaiting++;
+		while (b->state == CACHE_IO_QUEUED) {
+			cond_wait(&b->io_async.ready,
+				  &fs_cache.lock);
+		}
+	}
+
+	ASSERT(b->io_async.awaiting > 0);
+	if (--b->io_async.awaiting == 0) {
+		b->state = b->io_async.ready_state;
+		b->io_async.ready_state = CACHE_UNUSED;
+		cond_signal(&b->io_async.ready, &fs_cache.lock);
+	}
+
+	// TODO: combine above loop+if with loop below?
+	while (b->state == CACHE_IO_QUEUED || b->io_async.awaiting > 0) {
+		cond_wait(&b->io_async.ready, &fs_cache.lock);
+	}
+
+	/* Verify buffer was not reused behind our backs. */
+	ASSERT(b->sector == sector_start || b->sector == CACHE_SECTOR_UNSET);
+}
+
+static void
+cache_block_drop_reference(struct cache_block *b)
+{
+	// TODO: cross-reference with similar code in cache_block_drain()
+	ASSERT(b->io_async.awaiting > 0);
+	if (--b->io_async.awaiting == 0) {
+		// TODO: state -> io_async.ready_state instead of CACHE_CLEAN?
+		b->state = CACHE_CLEAN;
+		b->io_async.ready_state = CACHE_UNUSED;
+		cond_signal(&b->io_async.ready, &fs_cache.lock);
+	}
 }
 
 static bool
@@ -270,12 +383,9 @@ cache_find(block_sector_t sector, struct cache_block **cached)
 				break;
 			case CACHE_IO_QUEUED:
 				/* Wait for in-flight data to be ready. */
-				while (b->state == CACHE_IO_QUEUED) {
-					cond_wait(&b->io_async.ready,
-					          &fs_cache.lock);
-				}
-				ASSERT(b->sector == sector); // see TODO
-				__attribute__((fallthrough));
+				cache_block_drain(b, true);
+				*cached = b;
+				return true;
 			case CACHE_IO_AWAIT_FIRST_USE:
 			case CACHE_CLEAN:
 			case CACHE_DIRTY:
@@ -297,7 +407,13 @@ cache_find(block_sector_t sector, struct cache_block **cached)
 			case CACHE_UNUSED:
 			case CACHE_CLEAN:
 			case CACHE_DIRTY:
-				oldest = b;
+				// TODO: fix eviction logic re: draining,
+				// maybe check b->sector == INODE_SECTOR_UNSET?
+				// or only check awaiting, not list_empty()?
+				if (list_empty(&b->io_async.ready.waiters) &&
+				    b->io_async.awaiting == 0) {
+					oldest = b;
+				}
 				break;
 			case CACHE_IO_QUEUED:
 			case CACHE_IO_AWAIT_FIRST_USE:
@@ -306,64 +422,14 @@ cache_find(block_sector_t sector, struct cache_block **cached)
 			}
 		}
 	}
-
 	ASSERT(oldest != NULL);
-	const block_sector_t oldest_before_flush = oldest->sector;
 
-	if (oldest->state == CACHE_DIRTY && !cache_flush_async(oldest)) {
-		return false;
+	if (oldest->state == CACHE_DIRTY) {
+		if (!cache_flush_async_and_claim_atomically(oldest)) {
+			return false;
+		}
+		cache_block_drain(oldest, false);
 	}
-
-	/* TODO: looks like problem is:
-	 *
-	 * 1) caller issues regular read at sector S0
-	 * 2) after S0, readahead starts on sector S1
-	 * 3) cache_optional_readahead() on S1 calls cache_read_async()
-	 * 4) cache_read_async() for readahead marks S1 as CACHE_IO_QUEUED
-	 * 5) cache_read_async() for readahead enqueues, waits for IO thread
-	 * 6) caller issues regular read at sector S1 (matching readahead)
-	 * 7) cache_read_with_readhead() on S1 calls cache_find() and
-	 *    encounters block corresponding to in-flight readahead request for
-	 *    S1, in state CACHE_IO_QUEUED; calls cond_wait() in response
-	 *     a) note: cache_optional_readahead() does _not_ use cache_find()
-	 * 8) IO thread wakes and calls block_read() for sector S1, marks cache
-	 *    entry CACHE_CLEAN (readahead does not enforce at-least-one-read)
-	 * 9) caller issues write at sector S2
-	 * 10) cache_write() on S2 calls cache_find()
-	 * 11) cache_find() chooses cache block of S1 for eviction, which is in
-	 *     CACHE_CLEAN state instead of CACHE_IO_AWAIT_FIRST_USE, due to
-	 *     origin as readahead read instead of regular read
-	 * 12) cache_find() calls cache_block_reset() and returns
-	 * 13) cache_write() hits fastpath for sz == BLOCK_SECTOR_SIZE
-	 * 14) cache_write() sets cache block to point to S2, sets CACHE_DIRTY
-	 *     a) note: cache_write() can in general (and likely in this case)
-	 *        avoid I/0 entirely, performing only in-memory operations on
-	 *        buffer cache
-	 * 15) regular read wakes up from step 7 in cache_find() in response to
-	 *     IO thread cond_broadcast() and change from CACHE_IO_QUEUED
-	 *     state, finds block has changed out from underneath to point at
-	 *     S2 instead of the expected S1, asserts on this condition
-	 *
-	 * Earlier hypothesis:
-	 *
-	 * 1) thread A chooses oldest cache entry C to evict in cache_find()
-	 * 2) cache entry C is dirty, so thread A calls cache_flush_async() to
-	 *    write to disk
-	 * 3) thread A enqueues IO request, yields, and releases lock
-	 * 4) thread B makes a read request, calls cache_find(), and gets cache
-	 *    hit on C being flushed, with state CACHE_IO_QUEUED
-	 * 5) thread B waits on cache entry C to transition out of
-	 *    CACHE_IO_QUEUED
-	 * 6) IO thread flushes C to disk
-	 * 7) thread A wakes and evicts cache entry C from memory, calls
-	 *    cache_block_reset(), and starts to reuse it (e.g. calls
-	 *    cache_read_async)
-	 * 8) thread B wakes on cache entry C leaving state CACHE_IO_QUEUED ->
-	 *    CACHE_CLEAN
-	 * 9) thread B now finds cache entry C has been changed to refer to a
-	 *    different sector, by thread A in step 7
-	 */
-	ASSERT(oldest_before_flush == oldest->sector);
 
 	cache_block_reset(oldest);
 	*cached = oldest;
@@ -406,8 +472,7 @@ cache_read_with_readhead(block_sector_t sector,
 		if (!cache_read_async(sector, cached, WAIT_FOR_READ)) {
 			goto done;
 		}
-		ASSERT(cached->state == CACHE_IO_AWAIT_FIRST_USE);
-		cached->state = CACHE_CLEAN;
+		cache_block_drop_reference(cached); // TODO: move lower in func
 		break;
 	case CACHE_CLEAN:
 	case CACHE_DIRTY:
@@ -452,7 +517,7 @@ cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 			if (!cache_read_async(sector, cached, WAIT_FOR_READ)) {
 				goto done;
 			}
-			ASSERT(cached->state == CACHE_IO_AWAIT_FIRST_USE);
+			cache_block_drain(cached, false);
 		}
 		break;
 	case CACHE_CLEAN:
