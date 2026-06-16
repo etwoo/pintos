@@ -305,6 +305,17 @@ cache_optional_readahead(block_sector_t hint)
 }
 
 static void
+cache_block_drop_reference(struct cache_block *b)
+{
+	ASSERT(b->io_async.awaiting > 0);
+	if (--b->io_async.awaiting == 0) {
+		b->state = b->io_async.ready_state;
+		b->io_async.ready_state = CACHE_UNUSED;
+		cond_signal(&b->io_async.ready, &fs_cache.lock);
+	}
+}
+
+static void
 cache_block_drain(struct cache_block *b, bool add_reference)
 {
 	const block_sector_t sector_start = b->sector;
@@ -317,33 +328,14 @@ cache_block_drain(struct cache_block *b, bool add_reference)
 		}
 	}
 
-	ASSERT(b->io_async.awaiting > 0);
-	if (--b->io_async.awaiting == 0) {
-		b->state = b->io_async.ready_state;
-		b->io_async.ready_state = CACHE_UNUSED;
-		cond_signal(&b->io_async.ready, &fs_cache.lock);
-	}
+	cache_block_drop_reference(b);
 
-	// TODO: combine above loop+if with loop below?
 	while (b->state == CACHE_IO_QUEUED || b->io_async.awaiting > 0) {
 		cond_wait(&b->io_async.ready, &fs_cache.lock);
 	}
 
 	/* Verify buffer was not reused behind our backs. */
 	ASSERT(b->sector == sector_start || b->sector == CACHE_SECTOR_UNSET);
-}
-
-static void
-cache_block_drop_reference(struct cache_block *b)
-{
-	// TODO: cross-reference with similar code in cache_block_drain()
-	ASSERT(b->io_async.awaiting > 0);
-	if (--b->io_async.awaiting == 0) {
-		// TODO: state -> io_async.ready_state instead of CACHE_CLEAN?
-		b->state = CACHE_CLEAN;
-		b->io_async.ready_state = CACHE_UNUSED;
-		cond_signal(&b->io_async.ready, &fs_cache.lock);
-	}
 }
 
 static bool
