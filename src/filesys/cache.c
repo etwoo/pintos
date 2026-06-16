@@ -15,7 +15,6 @@ static const block_sector_t CACHE_SECTOR_UNSET = UINT32_MAX;
 enum cache_block_state {
 	CACHE_UNUSED,
 	CACHE_IO_QUEUED,
-	CACHE_IO_AWAIT_FIRST_USE,
 	CACHE_CLEAN,
 	CACHE_DIRTY,
 };
@@ -37,11 +36,16 @@ enum cache_request_op {
 	REQUEST_DRAIN_AND_TEARDOWN,
 };
 
+enum cache_request_waiters {
+	ZERO_WAITERS,
+	ONE_WAITER,
+};
+
 struct cache_request {
 	enum cache_request_op op;
 	block_sector_t sector_extra;
 	struct cache_block *block;
-	enum cache_block_state ready_state;
+	enum cache_request_waiters request_waiters;
 	struct list_elem elem;
 };
 
@@ -107,7 +111,7 @@ cache_block_wait_for_io(struct cache_block *b)
 
 	/* Drop reference, while still preparing for a waiting caller
 	   who will perform at least one read from this cache_block. */
-	cache_block_drop_reference(b, CACHE_IO_AWAIT_FIRST_USE);
+	cache_block_drop_reference(b, CACHE_CLEAN);
 }
 
 static void
@@ -175,19 +179,28 @@ cache_io_thread(void *aux UNUSED)
 
 		lock_acquire(&fs_cache.lock);
 
-		if (r->op == REQUEST_DRAIN_AND_TEARDOWN) {
-			ASSERT(r->block->sector == CACHE_SECTOR_UNSET);
-		} else {
+		r->block->state = CACHE_CLEAN;
+
+		switch (r->op) {
+		case REQUEST_READ:
+		case REQUEST_WRITE:
 			/* Verify buffer was not reused behind our backs. */
 			ASSERT(r->block->sector == sector);
+			break;
+		case REQUEST_DRAIN_AND_TEARDOWN:
+			ASSERT(r->block->sector == CACHE_SECTOR_UNSET);
+			break;
 		}
 
-		r->block->state = r->ready_state;
-		if (r->block->state == CACHE_IO_AWAIT_FIRST_USE) {
+		switch (r->request_waiters) {
+		case ZERO_WAITERS:
+			break;
+		case ONE_WAITER:
 			/* Awaiting caller requested to keep this cache_block
 			   alive (i.e. prevent eviction) until at least one
 			   read from the cache can complete. */
 			cache_block_add_reference(r->block);
+			break;
 		}
 
 		cond_broadcast(&r->block->io_async.ready, &fs_cache.lock);
@@ -228,8 +241,7 @@ static bool
 cache_io_async(enum cache_request_op op,
                struct cache_block *cache,
                block_sector_t sector_extra,
-               enum cache_block_state ready_state,
-               bool wait_until_ready)
+	       enum cache_request_waiters request_waiters)
 {
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
 
@@ -250,7 +262,7 @@ cache_io_async(enum cache_request_op op,
 	r->op = op;
 	r->sector_extra = sector_extra;
 	r->block = cache;
-	r->ready_state = ready_state;
+	r->request_waiters = request_waiters;
 	list_push_back(&fs_cache.requests, &r->elem);
 
 	/* cache_io_thread() takes ownership of cache_request memory. */
@@ -258,6 +270,7 @@ cache_io_async(enum cache_request_op op,
 
 	cond_signal(&fs_cache.requests_pending, &fs_cache.lock);
 
+	const bool wait_until_ready = (request_waiters != ZERO_WAITERS);
 	while (wait_until_ready && cache->state == CACHE_IO_QUEUED) {
 		cond_wait(&cache->io_async.ready, &fs_cache.lock);
 	}
@@ -267,15 +280,14 @@ cache_io_async(enum cache_request_op op,
 static bool
 cache_read_async(block_sector_t sector,
                  struct cache_block *to_fill,
-                 enum cache_block_state ready_state)
+		 enum cache_request_waiters request_waiters)
 {
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
 	to_fill->sector = sector;
 	return cache_io_async(REQUEST_READ,
 	                      to_fill,
 	                      CACHE_SECTOR_UNSET,
-	                      ready_state,
-	                      /* wait_until_ready */ true);
+			      request_waiters);
 }
 
 static bool
@@ -290,8 +302,7 @@ cache_prepare_drain_teardown_async(struct cache_block *to_flush)
 	return cache_io_async(REQUEST_DRAIN_AND_TEARDOWN,
 	                      to_flush,
 	                      sector_extra,
-	                      CACHE_IO_AWAIT_FIRST_USE,
-	                      /* wait_until_ready */ true);
+	                      ONE_WAITER);
 }
 
 static bool
@@ -301,8 +312,7 @@ cache_flush_async(struct cache_block *to_flush)
 	return cache_io_async(REQUEST_WRITE,
 	                      to_flush,
 	                      CACHE_SECTOR_UNSET,
-	                      CACHE_CLEAN,
-	                      /* wait_until_ready */ true);
+	                      ONE_WAITER);
 }
 
 static void
@@ -342,8 +352,8 @@ cache_optional_readahead(block_sector_t hint)
 				break;
 			case CACHE_DIRTY:
 				/* Do not trigger writeback. */
+				break;
 			case CACHE_IO_QUEUED:
-			case CACHE_IO_AWAIT_FIRST_USE:
 				/* Do not evict entry under active use. */
 				break;
 			}
@@ -356,7 +366,7 @@ cache_optional_readahead(block_sector_t hint)
 	}
 
 	cache_block_reset(oldest);
-	cache_read_async(hint, oldest, CACHE_CLEAN);
+	cache_read_async(hint, oldest, ZERO_WAITERS);
 	/* Do not wait for request to complete. Also ignore failure. */
 }
 
@@ -379,7 +389,6 @@ cache_find(block_sector_t sector, struct cache_block **cached)
 				ASSERT(b->state != CACHE_IO_QUEUED);
 				*cached = b;
 				return true;
-			case CACHE_IO_AWAIT_FIRST_USE:
 			case CACHE_CLEAN:
 			case CACHE_DIRTY:
 				/* Cache hit. Return in-memory data. */
@@ -407,7 +416,6 @@ cache_find(block_sector_t sector, struct cache_block **cached)
 				}
 				break;
 			case CACHE_IO_QUEUED:
-			case CACHE_IO_AWAIT_FIRST_USE:
 				/* Do not evict entry under active use. */
 				break;
 			}
@@ -461,16 +469,13 @@ cache_read_with_readhead(block_sector_t sector,
 	switch (cached->state) {
 	case CACHE_UNUSED:
 		/* Cache miss. Populate assigned cache entry. */
-		if (!cache_read_async(sector,
-		                      cached,
-		                      CACHE_IO_AWAIT_FIRST_USE)) {
+		if (!cache_read_async(sector, cached, ONE_WAITER)) {
 			goto done;
 		}
 		got_reference = true;
 		break;
 	case CACHE_CLEAN:
 	case CACHE_DIRTY:
-	case CACHE_IO_AWAIT_FIRST_USE:
 		/* Cache hit. Copy value to caller. */
 		break;
 	case CACHE_IO_QUEUED:
@@ -512,9 +517,7 @@ cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 			/* Cache miss on partial write. Read existing values
 			 * surrounding the target [pos, pos+sz] range, which
 			 * the caller expects to remain unchanged. */
-			if (!cache_read_async(sector,
-			                      cached,
-			                      CACHE_IO_AWAIT_FIRST_USE)) {
+			if (!cache_read_async(sector, cached, ONE_WAITER)) {
 				goto done;
 			}
 			got_reference = true;
@@ -524,7 +527,6 @@ cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 		break;
 	case CACHE_CLEAN:
 	case CACHE_DIRTY:
-	case CACHE_IO_AWAIT_FIRST_USE:
 		/* Cache hit. Update existing value. */
 		break;
 	case CACHE_IO_QUEUED:
