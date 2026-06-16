@@ -242,7 +242,7 @@ static bool
 cache_io_async(enum cache_request_op op,
                struct cache_block *cache,
                block_sector_t sector_extra,
-	       enum cache_request_waiters request_waiters)
+               enum cache_request_waiters request_waiters)
 {
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
 
@@ -281,14 +281,14 @@ cache_io_async(enum cache_request_op op,
 static bool
 cache_read_async(block_sector_t sector,
                  struct cache_block *to_fill,
-		 enum cache_request_waiters request_waiters)
+                 enum cache_request_waiters request_waiters)
 {
 	ASSERT(lock_held_by_current_thread(&fs_cache.lock));
 	to_fill->sector = sector;
 	return cache_io_async(REQUEST_READ,
 	                      to_fill,
 	                      CACHE_SECTOR_UNSET,
-			      request_waiters);
+	                      request_waiters);
 }
 
 static bool
