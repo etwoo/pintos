@@ -487,6 +487,7 @@ cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 	}
 	ASSERT(cached != NULL);
 
+	bool got_reference = false;
 	switch (cached->state) {
 	case CACHE_UNUSED:
 		if (sz < BLOCK_SECTOR_SIZE) {
@@ -498,7 +499,9 @@ cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 			                      CACHE_IO_AWAIT_FIRST_USE)) {
 				goto done;
 			}
-			cache_block_drain(cached, false);
+			got_reference = true;
+		} else {
+			cached->sector = sector;
 		}
 		break;
 	case CACHE_CLEAN:
@@ -512,11 +515,16 @@ cache_write(block_sector_t sector, int pos, int sz, const void *buffer)
 		break;
 	}
 
-	cached->state = CACHE_DIRTY;
-	cached->sector = sector;
+	ASSERT(cached->sector == sector);
 	assert_sector_pos_sz_in_range(pos, sz);
 	memcpy(cached->data + pos, buffer, sz);
 	cached->accessed_at = timer_ticks();
+
+	if (got_reference) {
+		cache_block_drop_reference(cached, CACHE_DIRTY, CACHE_UNUSED);
+	} else {
+		cached->state = CACHE_DIRTY;
+	}
 
 done:
 	lock_release(&fs_cache.lock);
