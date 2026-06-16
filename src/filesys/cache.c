@@ -315,6 +315,37 @@ cache_find(block_sector_t sector, struct cache_block **cached)
 	}
 
 	/* TODO: looks like problem is:
+	 *
+	 * 1) caller issues regular read at sector S0
+	 * 2) after S0, readahead starts on sector S1
+	 * 3) cache_optional_readahead() on S1 calls cache_read_async()
+	 * 4) cache_read_async() for readahead marks S1 as CACHE_IO_QUEUED
+	 * 5) cache_read_async() for readahead enqueues, waits for IO thread
+	 * 6) caller issues regular read at sector S1 (matching readahead)
+	 * 7) cache_read_with_readhead() on S1 calls cache_find() and
+	 *    encounters block corresponding to in-flight readahead request for
+	 *    S1, in state CACHE_IO_QUEUED; calls cond_wait() in response
+	 *     a) note: cache_optional_readahead() does _not_ use cache_find()
+	 * 8) IO thread wakes and calls block_read() for sector S1, marks cache
+	 *    entry CACHE_CLEAN (readahead does not enforce at-least-one-read)
+	 * 9) caller issues write at sector S2
+	 * 10) cache_write() on S2 calls cache_find()
+	 * 11) cache_find() chooses cache block of S1 for eviction, which is in
+	 *     CACHE_CLEAN state instead of CACHE_IO_AWAIT_FIRST_USE, due to
+	 *     origin as readahead read instead of regular read
+	 * 12) cache_find() calls cache_block_reset() and returns
+	 * 13) cache_write() hits fastpath for sz == BLOCK_SECTOR_SIZE
+	 * 14) cache_write() sets cache block to point to S2, sets CACHE_DIRTY
+	 *     a) note: cache_write() can in general (and likely in this case)
+	 *        avoid I/0 entirely, performing only in-memory operations on
+	 *        buffer cache
+	 * 15) regular read wakes up from step 7 in cache_find() in response to
+	 *     IO thread cond_broadcast() and change from CACHE_IO_QUEUED
+	 *     state, finds block has changed out from underneath to point at
+	 *     S2 instead of the expected S1, asserts on this condition
+	 *
+	 * Earlier hypothesis:
+	 *
 	 * 1) thread A chooses oldest cache entry C to evict in cache_find()
 	 * 2) cache entry C is dirty, so thread A calls cache_flush_async() to
 	 *    write to disk
