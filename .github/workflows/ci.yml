@@ -23,11 +23,13 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -qqy     \
-          binutils-i686-linux-gnu-dbg \
-          gcc-14-i686-linux-gnu-base  \
-          bochs                       \
-          qemu-system-x86
+        sudo apt-get install -qqy gcc-14-i686-linux-gnu qemu-system-x86 bochs
+    - name: Kludge compiler toolchain executable names
+      run: |
+        sudo ln -s /usr/bin/i686-linux-gnu-gcc-14 /usr/bin/i686-elf-gcc
+        for tool in ld objcopy ar ranlib ; do
+          sudo ln -s /usr/bin/i686-linux-gnu-$tool /usr/bin/i686-elf-$tool
+        done
     - name: Build
       run: make -C src/${{ matrix.project }}
     - name: Test
