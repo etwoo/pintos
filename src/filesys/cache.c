@@ -7,8 +7,8 @@
 #include "threads/thread.h"
 
 #include <array.h>
-#include <bool.h>
 #include <debug.h>
+#include <stdbool.h>
 #include <string.h>
 
 static const block_sector_t CACHE_SECTOR_UNSET = UINT32_MAX;
