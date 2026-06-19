@@ -1,0 +1,24 @@
+image: debian:unstable-slim
+
+variables:
+  DEBIAN_FRONTEND: noninteractive
+
+build:gcc:
+  stage: build
+  parallel:
+    matrix:
+      - PROJECT: [threads, userprog, vm, filesys]
+  before_script:
+    - ./src/misc/apt.sh $PROJECT
+  script:
+    - make -C src/$PROJECT
+    - PATH="$PATH:$PWD/src/utils" make check -C src/$PROJECT
+
+build:clang-format:
+  stage: build
+  before_script:
+    - apt-get update -qq
+    - apt-get install -qqy clang-format git
+  script:
+    - git ls-files -z -- '**.h' '**.c' | xargs -0 clang-format -i
+    - git diff --exit-code

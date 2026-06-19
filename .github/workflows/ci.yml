@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+permissions:
+  # required by cpp-linter/cpp-linter-action@v2 for files-changed-only: false
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ macos-latest, ubuntu-latest ]
+        project: [ threads, userprog, vm, filesys ]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v7
+    - name: Setup (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew install i686-elf-gcc i686-elf-binutils qemu bochs
+    - name: Setup (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo ./src/misc/apt.sh ${{ matrix.project }}
+    - name: Build
+      run: make -C src/${{ matrix.project }}
+    - name: Test
+      run: |
+        export PATH="$PATH:$PWD/src/utils"
+        make check -C src/${{ matrix.project }}
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - name: Run clang-format
+      id: lint
+      uses: cpp-linter/cpp-linter-action@v2
+      with:
+        style: 'file'     # use .clang-format
+        version: 22       # use clang-format-22
+        tidy-checks: '-*' # do not run clang-tidy
+        files-changed-only: false
+        file-annotations: true
+        step-summary: true
+    - name: Fail job if clang-format found problems
+      if: steps.lint.outputs.checks-failed > 0
+      run: exit 1
