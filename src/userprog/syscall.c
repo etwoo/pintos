@@ -84,19 +84,30 @@ check_span_is_user_vaddr(struct intr_frame *f, const void *uaddr, unsigned sz)
 
 static void
 syscall_arg_peek(struct intr_frame *f,
-                 int *stack,
+                 int *stack_uaddr,
                  void **got_buffer_uaddr,
                  unsigned *got_buffer_sz,
                  char **got_cstring)
 {
-	void *uaddr = (void *)(*stack); /* uaddr parameter on top of stack */
+	void *uaddr = NULL;
+	{
+		void **stack_kaddr =
+			check_span_is_user_vaddr(f,
+		                                 stack_uaddr++,
+		                                 sizeof(*stack_uaddr));
+		uaddr = *stack_kaddr; /* uaddr arg on top of stack */
+	}
 	if (got_buffer_uaddr != NULL) {
 		*got_buffer_uaddr = uaddr;
 	}
 
 	if (got_buffer_sz != NULL) {
+		unsigned *stack_kaddr =
+			check_span_is_user_vaddr(f,
+		                                 stack_uaddr++,
+		                                 sizeof(*stack_uaddr));
+		*got_buffer_sz = *stack_kaddr;
 		/* Check span using size on stack (second arg). */
-		*got_buffer_sz = *(stack + 1);
 		check_span_is_user_vaddr(f, uaddr, *got_buffer_sz);
 		return;
 	}
@@ -148,6 +159,12 @@ syscall_arg_peek(struct intr_frame *f,
 	*got_cstring = bounce;
 }
 
+static int
+syscall_arg_peek_word(struct intr_frame *f, void *stack_uaddr)
+{
+	return *(int *)check_span_is_user_vaddr(f, stack_uaddr, sizeof(int));
+}
+
 static void NO_RETURN
 syscall_halt(void)
 {
@@ -157,7 +174,7 @@ syscall_halt(void)
 static void NO_RETURN
 syscall_exit(struct intr_frame *f, int *stack)
 {
-	const int status = *stack++;
+	const int status = syscall_arg_peek_word(f, stack++);
 	f->eax = status;
 	thread_exit(status);
 }
@@ -175,7 +192,8 @@ syscall_exec(struct intr_frame *f, int *stack)
 static void
 syscall_wait(struct intr_frame *f, int *stack)
 {
-	const int pid = *stack++; /* Assumes sizeof(pid_t) == sizeof(int). */
+	/* Assumes sizeof(tid_t) == sizeof(int). */
+	const int pid = syscall_arg_peek_word(f, stack++);
 	f->eax = process_wait(pid);
 }
 
@@ -184,7 +202,7 @@ syscall_create(struct intr_frame *f, int *stack)
 {
 	char *filename = NULL;
 	syscall_arg_peek(f, stack++, NULL, NULL, &filename);
-	const unsigned sz = *stack++;
+	const unsigned sz = syscall_arg_peek_word(f, stack++);
 
 	const bool created = filesys_create(filename, sz);
 
@@ -227,7 +245,7 @@ syscall_open(struct intr_frame *f, int *stack)
 static void
 syscall_filesize(struct intr_frame *f, int *stack)
 {
-	const int fd = *stack++;
+	const int fd = syscall_arg_peek_word(f, stack++);
 
 	struct file *file = fd_to_file(fd);
 	if (file == NULL) {
@@ -240,7 +258,7 @@ syscall_filesize(struct intr_frame *f, int *stack)
 static void
 syscall_io(int syscall_number, struct intr_frame *f, int *stack)
 {
-	const int fd = *stack++;
+	const int fd = syscall_arg_peek_word(f, stack++);
 	struct file *file = fd_to_file(fd);
 
 	void *uaddr = NULL;
@@ -318,8 +336,8 @@ syscall_io(int syscall_number, struct intr_frame *f, int *stack)
 static void
 syscall_seek(struct intr_frame *f, int *stack)
 {
-	const int fd = *stack++;
-	const unsigned sz = *stack++;
+	const int fd = syscall_arg_peek_word(f, stack++);
+	const unsigned sz = syscall_arg_peek_word(f, stack++);
 
 	struct file *file = fd_to_file(fd);
 	if (file == NULL) {
@@ -333,7 +351,7 @@ syscall_seek(struct intr_frame *f, int *stack)
 static void
 syscall_tell(struct intr_frame *f, int *stack)
 {
-	const int fd = *stack++;
+	const int fd = syscall_arg_peek_word(f, stack++);
 
 	struct file *file = fd_to_file(fd);
 	if (file == NULL) {
@@ -346,7 +364,7 @@ syscall_tell(struct intr_frame *f, int *stack)
 static void
 syscall_close(struct intr_frame *f, int *stack)
 {
-	const int fd = *stack++;
+	const int fd = syscall_arg_peek_word(f, stack++);
 
 	struct file *file = fd_to_file(fd);
 	struct dir *dir = fd_to_dir(fd);
@@ -365,8 +383,8 @@ static void
 syscall_mmap(struct intr_frame *f, int *stack)
 {
 #ifdef VM
-	const int fd = *stack++;
-	uintptr_t uaddr = *stack++;
+	const int fd = syscall_arg_peek_word(f, stack++);
+	uintptr_t uaddr = syscall_arg_peek_word(f, stack++);
 	f->eax = page_mmap(fd, (void *)uaddr).id;
 #else
 	(void)stack; /* Unused. */
@@ -379,7 +397,7 @@ syscall_munmap(struct intr_frame *f, int *stack)
 {
 #ifdef VM
 	const struct page_descriptor pd = {
-		.id = *stack++,
+		.id = syscall_arg_peek_word(f, stack++),
 	};
 	page_munmap(pd);
 	f->eax = IO_SUCCESS;
@@ -424,8 +442,8 @@ syscall_mkdir(struct intr_frame *f, int *stack)
 static void
 syscall_readdir(struct intr_frame *f, int *stack)
 {
-	const int fd = *stack++;
-	void *uaddr = (void *)(*stack++);
+	const int fd = syscall_arg_peek_word(f, stack++);
+	void *uaddr = (void *)syscall_arg_peek_word(f, stack++);
 
 	struct dir *dir = fd_to_dir(fd);
 	char bounce[NAME_MAX + 1] = {0};
@@ -451,7 +469,7 @@ syscall_readdir(struct intr_frame *f, int *stack)
 static void
 syscall_isdir(struct intr_frame *f, int *stack)
 {
-	const int fd = *stack++;
+	const int fd = syscall_arg_peek_word(f, stack++);
 
 	const bool ok = (fd_to_dir(fd) != NULL);
 	f->eax = ok ? 1 : 0; /* isdir() returns bool, not integer code */
@@ -460,7 +478,7 @@ syscall_isdir(struct intr_frame *f, int *stack)
 static void
 syscall_inumber(struct intr_frame *f, int *stack)
 {
-	const int fd = *stack++;
+	const int fd = syscall_arg_peek_word(f, stack++);
 
 	struct file *file = fd_to_file(fd);
 	struct dir *dir = fd_to_dir(fd);
@@ -478,66 +496,68 @@ static void
 syscall_handler(struct intr_frame *f)
 {
 	int *kaddr = check_span_is_user_vaddr(f, f->esp, sizeof(int));
-	const int syscall_number = *kaddr++;
+
+	const int syscall_number = *kaddr;
+	int *stack = f->esp + sizeof(int);
 
 	switch (syscall_number) {
 	case SYS_HALT:
 		syscall_halt();
 		break;
 	case SYS_EXIT:
-		syscall_exit(f, kaddr);
+		syscall_exit(f, stack);
 		break;
 	case SYS_EXEC:
-		syscall_exec(f, kaddr);
+		syscall_exec(f, stack);
 		break;
 	case SYS_WAIT:
-		syscall_wait(f, kaddr);
+		syscall_wait(f, stack);
 		break;
 	case SYS_CREATE:
-		syscall_create(f, kaddr);
+		syscall_create(f, stack);
 		break;
 	case SYS_REMOVE:
-		syscall_remove(f, kaddr);
+		syscall_remove(f, stack);
 		break;
 	case SYS_OPEN:
-		syscall_open(f, kaddr);
+		syscall_open(f, stack);
 		break;
 	case SYS_FILESIZE:
-		syscall_filesize(f, kaddr);
+		syscall_filesize(f, stack);
 		break;
 	case SYS_READ:
 	case SYS_WRITE:
-		syscall_io(syscall_number, f, kaddr);
+		syscall_io(syscall_number, f, stack);
 		break;
 	case SYS_SEEK:
-		syscall_seek(f, kaddr);
+		syscall_seek(f, stack);
 		break;
 	case SYS_TELL:
-		syscall_tell(f, kaddr);
+		syscall_tell(f, stack);
 		break;
 	case SYS_CLOSE:
-		syscall_close(f, kaddr);
+		syscall_close(f, stack);
 		break;
 	case SYS_MMAP:
-		syscall_mmap(f, kaddr);
+		syscall_mmap(f, stack);
 		break;
 	case SYS_MUNMAP:
-		syscall_munmap(f, kaddr);
+		syscall_munmap(f, stack);
 		break;
 	case SYS_CHDIR:
-		syscall_chdir(f, kaddr);
+		syscall_chdir(f, stack);
 		break;
 	case SYS_MKDIR:
-		syscall_mkdir(f, kaddr);
+		syscall_mkdir(f, stack);
 		break;
 	case SYS_READDIR:
-		syscall_readdir(f, kaddr);
+		syscall_readdir(f, stack);
 		break;
 	case SYS_ISDIR:
-		syscall_isdir(f, kaddr);
+		syscall_isdir(f, stack);
 		break;
 	case SYS_INUMBER:
-		syscall_inumber(f, kaddr);
+		syscall_inumber(f, stack);
 		break;
 	default:
 		f->eax = ENOSYS;
