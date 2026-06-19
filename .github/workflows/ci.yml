@@ -29,9 +29,9 @@ jobs:
           bochs
           qemu-system-x86
     - name: Build
-      run: make -C src/${{ project }}
+      run: make -C src/${{ matrix.project }}
     - name: Test
-      run: make check -C src/${{ project }}
+      run: make check -C src/${{ matrix.project }}
 
   lint:
     runs-on: ubuntu-latest
