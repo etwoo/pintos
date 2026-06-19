@@ -21,17 +21,19 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Install dependencies
-      run: >
-        sudo apt-get update -qq &&
-        sudo apt-get install -qqy
-        binutils-i686-linux-gnu-dbg
-        gcc-14-i686-linux-gnu-base
-        bochs
-        qemu-system-x86
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -qqy     \
+          binutils-i686-linux-gnu-dbg \
+          gcc-14-i686-linux-gnu-base  \
+          bochs                       \
+          qemu-system-x86
     - name: Build
       run: make -C src/${{ matrix.project }}
     - name: Test
-      run: make check -C src/${{ matrix.project }}
+      run: |
+        echo "$PWD/src/utils" >> "$GITHUB_PATH"
+        make check -C src/${{ matrix.project }}
 
   lint:
     runs-on: ubuntu-latest
