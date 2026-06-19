@@ -34,7 +34,7 @@ jobs:
       run: make -C src/${{ matrix.project }}
     - name: Test
       run: |
-        echo "$PWD/src/utils" >> "$GITHUB_PATH"
+        export PATH="$PATH:$PWD/src/utils"
         make check -C src/${{ matrix.project }}
 
   lint:
