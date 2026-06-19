@@ -15,6 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        os: [ ubuntu-latest ]
         project: [ threads, userprogs, vm, filesys ]
     runs-on: ${{ matrix.os }}
     steps:
@@ -27,7 +28,7 @@ jobs:
           gcc-14-i686-linux-gnu-base
           bochs
           qemu-system-x86
-    - name: Configure, build, and test
+    - name: Build and test
       run: >
         make -C src/${{ project }} && make check -C src/${{ project }}
 
