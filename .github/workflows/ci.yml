@@ -1,4 +1,4 @@
-name: ci
+name: Makefile CI
 
 on:
   push:
