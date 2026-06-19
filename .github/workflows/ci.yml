@@ -30,6 +30,7 @@ jobs:
         tar zxf bochs.tgz
         cd Bochs-*/bochs
         ./configure --prefix=/usr --with-nogui
+        sed -i 's/bx_print_header();//g' main.cc
         make -j$(nproc)
         sudo cp ./bochs /usr/bin/bochs
         sudo ln -s /usr/share/bochs/VGABIOS-lgpl-latest{,.bin}
