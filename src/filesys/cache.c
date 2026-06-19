@@ -7,6 +7,7 @@
 #include "threads/thread.h"
 
 #include <array.h>
+#include <bool.h>
 #include <debug.h>
 #include <string.h>
 
