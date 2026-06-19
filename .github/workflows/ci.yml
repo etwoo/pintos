@@ -32,7 +32,7 @@ jobs:
         done
     - name: Switch Project 1 tests from Bochs to QEMU
       run: >
-        sed -i s@^SIMULATOR = --bochs$@SIMULATOR = --qemu@g ./src/threads/Make.vars
+        sed -i "s@^SIMULATOR = --bochs$@SIMULATOR = --qemu@g" ./src/threads/Make.vars
     - name: Build
       run: make -C src/${{ matrix.project }}
     - name: Test
