@@ -28,9 +28,10 @@ jobs:
           gcc-14-i686-linux-gnu-base
           bochs
           qemu-system-x86
-    - name: Build and test
-      run: >
-        make -C src/${{ project }} && make check -C src/${{ project }}
+    - name: Build
+      run: make -C src/${{ project }}
+    - name: Test
+      run: make check -C src/${{ project }}
 
   lint:
     runs-on: ubuntu-latest
