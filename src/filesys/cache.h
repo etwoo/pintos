@@ -3,6 +3,8 @@
 
 #include "devices/block.h"
 
+#include <stdbool.h>
+
 void cache_init(void);
 void cache_done(void);
 
